@@ -19,8 +19,14 @@ export function CommandPalette() {
         setIsOpen(false);
       }
     };
+    const handleCustomEvent = () => setIsOpen(true);
+    
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('os:open-spotlight', handleCustomEvent);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('os:open-spotlight', handleCustomEvent);
+    };
   }, []);
 
   if (!isOpen) return null;

@@ -149,15 +149,24 @@ export function Moodboard({ window }: { window: OSWindow }) {
       if (saved && saved.nodes) {
         setNodes(saved.nodes);
         if (saved.comments) setComments(saved.comments);
+        
+        // Add new image if passed via window data
+        if (window.data?.url) {
+           setNodes(prev => [...prev, { id: crypto.randomUUID(), type: 'image', x: 200, y: 200, width: 400, content: window.data.url }]);
+        }
       } else {
-        setNodes([
-          { id: '1', type: 'text', x: 100, y: 100, content: `CAMPAIGN: "${projectId.toUpperCase()}"\n\n(Tip: Paste images or text here)` },
-          { id: '2', type: 'image', x: 150, y: 200, content: 'https://picsum.photos/seed/void/400/500' },
-        ]);
+        if (window.data?.url) {
+           setNodes([{ id: '1', type: 'image', x: 200, y: 200, width: 400, content: window.data.url }]);
+        } else {
+           setNodes([
+             { id: '1', type: 'text', x: 100, y: 100, content: `CAMPAIGN: "${projectId.toUpperCase()}"\n\n(Tip: Paste images or text here)` },
+             { id: '2', type: 'image', x: 150, y: 200, content: 'https://picsum.photos/seed/void/400/500' },
+           ]);
+        }
       }
       setIsLoaded(true);
     });
-  }, [projectId, storageKey]);
+  }, [projectId, storageKey, window.data?.url]);
 
   // Save to local storage
   useEffect(() => {

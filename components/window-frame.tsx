@@ -13,7 +13,7 @@ interface WindowFrameProps {
 
 export function WindowFrame({ osWindow, children }: WindowFrameProps) {
   const { id, title, isMaximized, isMinimized, zIndex, x, y, width, height } = osWindow;
-  const { closeWindow, minimizeWindow, maximizeWindow, focusWindow, updateWindowDimensions, windows } = useOS();
+  const { closeWindow, minimizeWindow, maximizeWindow, focusWindow, updateWindowDimensions, windows, performanceMode } = useOS();
   const dragControls = useDragControls();
   
   const windowRef = useRef<HTMLDivElement>(null);
@@ -49,7 +49,15 @@ export function WindowFrame({ osWindow, children }: WindowFrameProps) {
   // Is this window the currently focused one?
   const isActive = zIndex >= Math.max(...windows.map(w => w.zIndex));
 
-  if (isMinimized) return null;
+  // If minimized, we still want to render the markup to preserve state (like Terminal history or iframes)
+  // but we can completely hide it to prevent rendering costs.
+  if (isMinimized) {
+    return (
+      <div style={{ display: 'none' }}>
+        {children}
+      </div>
+    );
+  }
 
   return (
     <motion.div
@@ -59,9 +67,9 @@ export function WindowFrame({ osWindow, children }: WindowFrameProps) {
         opacity: 1, 
         scale: 1,
         width: isMaximized ? '100vw' : currentWidth,
-        height: isMaximized ? 'calc(100vh - 48px)' : currentHeight,
+        height: isMaximized ? 'calc(100vh - 28px)' : currentHeight,
         x: isMaximized ? 0 : currentX,
-        y: isMaximized ? 0 : currentY,
+        y: isMaximized ? 28 : currentY,
         transition: {
           type: "spring",
           stiffness: 300,
@@ -74,19 +82,63 @@ export function WindowFrame({ osWindow, children }: WindowFrameProps) {
       dragListener={false} // Only drag using the header
       dragMomentum={false}
       onDragEnd={(e, info) => {
-        const newX = currentX + info.offset.x;
-        const newY = currentY + info.offset.y;
+        let newX = currentX + info.offset.x;
+        let newY = currentY + info.offset.y;
+        
+        let newWidth = currentWidth;
+        let newHeight = currentHeight;
+        
+        const screenW = window.innerWidth;
+        const screenH = window.innerHeight;
+        const headerSpace = 28;
+        
+        const pointerX = info.point.x;
+        const pointerY = info.point.y;
+        const pointerMargin = 20;
+        
+        if (pointerY < pointerMargin) {
+            // Snap to top -> Maximize
+            if (!isMaximized) maximizeWindow(id);
+            return;
+        }
+        
+        if (pointerX < pointerMargin) {
+            // Snap Left
+            newX = 0;
+            newY = headerSpace;
+            newWidth = screenW / 2;
+            newHeight = screenH - headerSpace;
+        } else if (pointerX > screenW - pointerMargin) {
+            // Snap Right
+            newX = screenW / 2;
+            newY = headerSpace;
+            newWidth = screenW / 2;
+            newHeight = screenH - headerSpace;
+        }
+
         setLocalPosition({ x: newX, y: newY });
-        updateWindowDimensions(id, newX, newY, currentWidth, currentHeight);
+        updateWindowDimensions(id, newX, newY, newWidth, newHeight);
       }}
       style={{ zIndex }}
       onPointerDown={() => focusWindow(id)}
       className={cn(
-        "absolute rounded-xl overflow-hidden flex flex-col pointer-events-auto",
+        "absolute top-0 left-0 rounded-xl flex flex-col pointer-events-auto",
         "border transition-colors duration-200",
+        // Avoid overflow-hidden during active drag due to clip-path recalculations? Overflow hidden is okay.
+        "overflow-hidden",
         isActive 
-          ? "border-white/30 bg-black/70 backdrop-blur-2xl shadow-[0_4px_40px_rgba(0,240,255,0.05)]" 
-          : "border-white/10 bg-black/40 backdrop-blur-md shadow-2xl"
+          ? [
+              "border-white/30",
+              performanceMode === 'heavy' 
+                ? "bg-black/70 backdrop-blur-2xl shadow-[0_4px_40px_rgba(0,240,255,0.05)]" 
+                : "bg-[#111] shadow-xl"
+            ]
+          : [
+              "border-white/10",
+              performanceMode === 'heavy'
+                ? "bg-black/40 backdrop-blur-md shadow-2xl"
+                : "bg-black shadow-md border-white/5"
+            ]
       )}
     >
       {/* Window Header */}
@@ -136,9 +188,9 @@ export function WindowFrame({ osWindow, children }: WindowFrameProps) {
       </div>
       
       {/* Absolute Bottom Right Resizer */}
-      {!isMaximized && isActive && (
+      {!isMaximized && (
         <div 
-          className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize flex items-end justify-end p-[1px] opacity-20 hover:opacity-100"
+          className="absolute bottom-0 right-0 w-8 h-8 cursor-se-resize flex items-end justify-end p-1.5 opacity-30 hover:opacity-100 z-50 bg-black/10 rounded-tl-lg transition-opacity"
           onPointerDown={(e) => {
             e.stopPropagation();
             if (isMaximized) return;

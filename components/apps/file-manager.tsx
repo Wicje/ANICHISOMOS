@@ -6,6 +6,7 @@ import { Folder, File as FileIcon, FileText, Image as ImageIcon, Video, Box, Sea
 import { cn } from '@/lib/utils';
 import { get, set } from 'idb-keyval';
 import { format } from 'date-fns';
+import { initAuth, googleSignIn, getAccessToken, logout } from '@/lib/firebase';
 
 type FileItem = {
   id: string;
@@ -15,6 +16,7 @@ type FileItem = {
   size: string;
   content?: string; // base64 or text
   projectId?: string;
+  isDrive?: boolean;
 };
 
 const initialFiles: FileItem[] = [
@@ -26,14 +28,104 @@ const initialFiles: FileItem[] = [
 ];
 
 export function FileManager({ window }: { window: OSWindow }) {
-  const { loadProject } = useOS();
+  const { loadProject, openWindow } = useOS();
+
+  const handleFileOpen = (file: FileItem) => {
+    if (file.type === 'project' && file.projectId) {
+      loadProject(file.projectId);
+      return;
+    }
+
+    if (file.name.toLowerCase().endsWith('.pdf')) {
+      openWindow('office', `Reading: ${file.name}`, { tab: 'pdf', url: file.content || file.name });
+    } else if (['.js', '.ts', '.jsx', '.tsx', '.json', '.html', '.css', '.md'].some(ext => file.name.toLowerCase().endsWith(ext)) || file.type === 'doc') {
+      openWindow('code', `Editing: ${file.name}`, { content: file.content, filename: file.name });
+    } else if (file.type === 'image') {
+      openWindow('moodboard', `Viewing: ${file.name}`, { url: file.content });
+    } else if (file.name.toLowerCase().endsWith('.fig') || file.type === 'design') {
+      openWindow('browser', `Figma: ${file.name}`, { url: 'https://www.figma.com/login' });
+    } else {
+      openWindow('code', `Editing: ${file.name}`, { content: file.content, filename: file.name });
+    }
+  };
   const [activeTab, setActiveTab] = useState('My Cloud Drive');
-  const tabs = ['My Cloud Drive', 'Shared With Me', 'Google Drive', 'Dropbox'];
+  const tabs = ['My Cloud Drive', 'Shared With Me', 'Google Drive', 'Ziklag NAS (Local)'];
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState('');
 
   const [files, setFiles] = useState<FileItem[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
+  
+  const [needsAuth, setNeedsAuth] = useState(false);
+  const [driveFiles, setDriveFiles] = useState<FileItem[]>([]);
+  const [isLoadingDrive, setIsLoadingDrive] = useState(false);
+
+  useEffect(() => {
+    const unsubscribe = initAuth(
+      () => setNeedsAuth(false),
+      () => setNeedsAuth(true)
+    );
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, []);
+
+  const fetchDriveFiles = async () => {
+    setIsLoadingDrive(true);
+    try {
+      const token = await getAccessToken();
+      if (!token) {
+        setNeedsAuth(true);
+        setIsLoadingDrive(false);
+        return;
+      }
+      const res = await fetch('https://www.googleapis.com/drive/v3/files?fields=files(id,name,mimeType,createdTime,size)', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.status === 401) {
+         setNeedsAuth(true);
+         setIsLoadingDrive(false);
+         return;
+      }
+      const data = await res.json();
+      if (data.files) {
+        const mapped = data.files.map((f: any) => ({
+          id: f.id,
+          name: f.name,
+          type: f.mimeType.includes('folder') ? 'folder' :
+                f.mimeType.includes('image') ? 'image' : 
+                f.mimeType.includes('video') ? 'video' : 'doc',
+          date: f.createdTime ? format(new Date(f.createdTime), 'MMM dd') : '--',
+          size: f.size ? (parseInt(f.size) / 1024).toFixed(1) + ' KB' : '--',
+          isDrive: true,
+        }));
+        setDriveFiles(mapped);
+      }
+    } catch (err) {
+      console.error('Failed to load drive files:', err);
+    } finally {
+      setIsLoadingDrive(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'Google Drive' && !needsAuth) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      fetchDriveFiles();
+    }
+  }, [activeTab, needsAuth]);
+
+  const handleLogin = async () => {
+    try {
+      const result = await googleSignIn();
+      if (result) {
+        setNeedsAuth(false);
+        if (activeTab === 'Google Drive') fetchDriveFiles();
+      }
+    } catch (err) {
+      console.error('Login failed:', err);
+    }
+  };
 
   useEffect(() => {
     get('anichisom_os_files').then((saved) => {
@@ -57,6 +149,13 @@ export function FileManager({ window }: { window: OSWindow }) {
     if (!uploadedFiles) return;
 
     Array.from(uploadedFiles).forEach(file => {
+      // Security: Prevent extremely large files from crashing the browser's memory
+      // Limit file uploads to 10MB
+      if (file.size > 10 * 1024 * 1024) {
+        alert(`File ${file.name} is too large. For performance stability, limit it to 10MB.`);
+        return;
+      }
+      
       const reader = new FileReader();
       reader.onload = (event) => {
         let type: FileItem['type'] = 'unknown';
@@ -79,36 +178,78 @@ export function FileManager({ window }: { window: OSWindow }) {
     });
   };
 
-  const deleteFile = (id: string, e: React.MouseEvent) => {
+  const deleteFile = async (id: string, e: React.MouseEvent, isDrive?: boolean) => {
     e.stopPropagation();
-    setFiles(prev => prev.filter(f => f.id !== id));
+    if (isDrive) {
+      const confirmed = globalThis.window.confirm('Are you sure you want to delete this file from Google Drive? This action cannot be undone.');
+      if (!confirmed) return;
+      
+      const token = await getAccessToken();
+      if (token) {
+        try {
+          await fetch(`https://www.googleapis.com/drive/v3/files/${id}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          setDriveFiles(prev => prev.filter(f => f.id !== id));
+        } catch(err) {
+          console.error("Failed to delete from drive", err);
+        }
+      }
+    } else {
+      setFiles(prev => prev.filter(f => f.id !== id));
+    }
   };
 
-  const downloadToLocal = (file: FileItem, e: React.MouseEvent) => {
+  const downloadToLocal = async (file: FileItem, e: React.MouseEvent) => {
     e.stopPropagation();
-    let content = file.content;
-    let mime = 'text/plain';
+    let downloadUrl = file.content;
     
     // For projects or unknown content we fallback to JSON
-    if (file.type === 'project' || (!content && file.type !== 'image')) {
-      content = "data:application/json;charset=utf-8," + encodeURIComponent(JSON.stringify(file, null, 2));
+    if (file.type === 'project' || (!downloadUrl && file.type !== 'image')) {
+      const jsonStr = JSON.stringify(file, null, 2);
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      downloadUrl = URL.createObjectURL(blob);
+    } else if (downloadUrl) {
+      try {
+        if (downloadUrl.startsWith('data:')) {
+          const res = await fetch(downloadUrl);
+          const blob = await res.blob();
+          downloadUrl = URL.createObjectURL(blob);
+        } else {
+          const blob = new Blob([downloadUrl], { type: 'text/plain' });
+          downloadUrl = URL.createObjectURL(blob);
+        }
+      } catch (err) {
+        console.error('Failed to create blob for download', err);
+      }
     }
     
-    if (content) {
-      if (!content.startsWith('data:')) {
-         // ensure it's a data url if it's not base64 already
-         content = "data:text/plain;charset=utf-8," + encodeURIComponent(content);
-      }
+    if (downloadUrl) {
       const a = document.createElement('a');
-      a.href = content;
+      a.href = downloadUrl;
       a.download = file.name + (file.type === 'project' ? '.json' : '');
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
+      
+      if (downloadUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(downloadUrl);
+      }
     }
   };
 
   const filteredFiles = files.filter(f => f.name.toLowerCase().includes(search.toLowerCase()));
+  const filteredDriveFiles = driveFiles.filter(f => f.name.toLowerCase().includes(search.toLowerCase()));
+  
+  const ziklagFiles: FileItem[] = [
+    { id: 'z1', name: 'Ziklag Firmware Recovery.bin', type: 'doc' as const, content: 'HEX DATA OMITTED', projectId: 'ziklag', size: '4.2 GB', date: new Date().toISOString() },
+    { id: 'z2', name: 'Client 492_SD_RAW.mp4', type: 'video' as const, size: '12.8 GB', date: new Date().toISOString() },
+    { id: 'z3', name: 'Agency Rebranding Assets.fig', type: 'design' as const, url: 'https://www.figma.com/login', size: '142 MB', date: new Date().toISOString() },
+    { id: 'z4', name: 'Local LLM Prompt Templates.md', type: 'doc' as const, content: '# Confidential\n\nPrompt templates for Ziklag data parsing.', size: '12 KB', date: new Date().toISOString() },
+  ].filter(f => f.name.toLowerCase().includes(search.toLowerCase()));
+
+  const currentFiles = activeTab === 'Google Drive' ? filteredDriveFiles : (activeTab === 'Ziklag NAS (Local)' ? ziklagFiles : filteredFiles);
 
   if (!isLoaded) return null;
 
@@ -170,29 +311,70 @@ export function FileManager({ window }: { window: OSWindow }) {
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6 bg-gradient-to-b from-[#0a0a0a] to-[#111111]">
-          <div className="flex items-center gap-3 mb-6 px-1">
-             <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center border border-blue-500/30">
-                <Cloud className="w-4 h-4 text-blue-400" />
+          <div className="flex items-center justify-between mb-6 px-1">
+             <div className="flex items-center gap-3">
+               <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center border border-blue-500/30">
+                  <Cloud className="w-4 h-4 text-blue-400" />
+               </div>
+               <h2 className="text-xl font-medium tracking-tight overflow-hidden text-ellipsis whitespace-nowrap">{activeTab}</h2>
              </div>
-             <h2 className="text-xl font-medium tracking-tight">{activeTab}</h2>
+             <div className="flex items-center gap-4">
+               {activeTab === 'Ziklag NAS (Local)' && (
+                  <div className="flex items-center gap-2 px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold rounded-full hidden sm:flex">
+                     <span className="relative flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                     </span>
+                     WebRTC Direct Connected
+                  </div>
+               )}
+               {activeTab === 'Google Drive' && !needsAuth && (
+                 <button onClick={logout} className="text-sm text-white/50 hover:text-white/80 transition-colors">Sign Out</button>
+               )}
+             </div>
           </div>
-          {filteredFiles.length === 0 ? (
+          {activeTab === 'Google Drive' && needsAuth ? (
+             <div className="h-full flex flex-col items-center justify-center gap-4 text-white/60">
+               <p className="max-w-md text-center text-sm font-medium">Connect your Google Drive account to sync and access files from anywhere across devices in real-time.</p>
+               <button className="gsi-material-button mt-2" onClick={handleLogin}>
+                  <div className="gsi-material-button-state"></div>
+                  <div className="gsi-material-button-content-wrapper flex items-center bg-white text-black px-4 py-2 rounded shadow shrink-0">
+                    <div className="gsi-material-button-icon mr-2">
+                       <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" className="w-5 h-5 block">
+                          <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
+                          <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
+                          <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
+                          <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
+                          <path fill="none" d="M0 0h48v48H0z"></path>
+                       </svg>
+                    </div>
+                    <span className="gsi-material-button-contents font-medium">Sign in with Google</span>
+                  </div>
+               </button>
+             </div>
+          ) : activeTab === 'Google Drive' && isLoadingDrive ? (
+             <div className="h-full flex items-center justify-center text-white/40 font-mono text-sm animate-pulse">
+               Loading drive files...
+             </div>
+          ) : currentFiles.length === 0 ? (
             <div className="h-full flex items-center justify-center text-white/40 font-mono text-sm">
               No files found.
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-              {filteredFiles.map(file => (
+              {currentFiles.map(file => (
                 <div 
                   key={file.id} 
-                  onDoubleClick={() => file.type === 'project' && file.projectId && loadProject(file.projectId)}
+                  onDoubleClick={() => handleFileOpen(file)}
                   className="group relative flex flex-col items-center justify-center p-4 rounded-xl border border-transparent hover:border-white/10 hover:bg-white/5 transition-all cursor-pointer"
                 >
                   <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-1">
-                    <button onClick={(e) => downloadToLocal(file, e)} className="p-1 hover:bg-white/10 rounded" title="Download to Local">
-                      <Download className="w-4 h-4 text-white/50 hover:text-white" />
-                    </button>
-                    <button onClick={(e) => deleteFile(file.id, e)} className="p-1 hover:bg-white/10 rounded" title="Delete">
+                    {!file.isDrive && (
+                      <button onClick={(e) => downloadToLocal(file, e)} className="p-1 hover:bg-white/10 rounded" title="Download to Local">
+                        <Download className="w-4 h-4 text-white/50 hover:text-white" />
+                      </button>
+                    )}
+                    <button onClick={(e) => deleteFile(file.id, e, file.isDrive)} className="p-1 hover:bg-white/10 rounded" title="Delete">
                       <Trash2 className="w-4 h-4 text-white/50 hover:text-rose-500" />
                     </button>
                   </div>

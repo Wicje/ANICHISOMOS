@@ -15,6 +15,7 @@ export type OSWindow = {
   x: number;
   y: number;
   data?: any; // For passing initial state or props to the app
+  workspace?: number;
 };
 
 export type Snapshot = {
@@ -24,9 +25,25 @@ export type Snapshot = {
   windows: OSWindow[];
 };
 
+export type PerformanceMode = 'light' | 'heavy';
+
+export type OSRole = 'admin' | 'filmmaker' | 'technician';
+
+export type OSUser = {
+  id: string;
+  name: string;
+  role: OSRole;
+};
+
 type OSContextType = {
+  currentUser: OSUser | null;
+  setCurrentUser: (user: OSUser | null) => void;
   windows: OSWindow[];
   snapshots: Snapshot[];
+  performanceMode: PerformanceMode;
+  activeWorkspace: number;
+  setActiveWorkspace: (id: number) => void;
+  setPerformanceMode: (mode: PerformanceMode) => void;
   openWindow: (appId: string, title?: string, data?: any) => void;
   closeWindow: (id: string) => void;
   focusWindow: (id: string) => void;
@@ -43,8 +60,11 @@ type OSContextType = {
 const OSContext = createContext<OSContextType | undefined>(undefined);
 
 export function OSProvider({ children }: { children: React.ReactNode }) {
+  const [currentUser, setCurrentUser] = useState<OSUser | null>(null);
   const [windows, setWindows] = useState<OSWindow[]>([]);
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
+  const [performanceMode, setPerformanceMode] = useState<PerformanceMode>('heavy');
+  const [activeWorkspace, setActiveWorkspace] = useState(0);
   const highestZIndexRef = useRef(10);
 
   useEffect(() => {
@@ -109,11 +129,11 @@ export function OSProvider({ children }: { children: React.ReactNode }) {
     const nextZ = highestZIndexRef.current;
 
     setWindows((curr) => {
-      // Prevent duplicate instances of the same app; focus it instead
-      const existing = curr.find((w) => w.appId === appId);
+      // Prevent duplicate instances of the same app in the same workspace; focus it instead
+      const existing = curr.find((w) => w.appId === appId && w.workspace === activeWorkspace);
       if (existing) {
         return curr.map((w) => 
-          w.appId === appId 
+          (w.appId === appId && w.workspace === activeWorkspace)
             ? { ...w, zIndex: nextZ, isMinimized: false } 
             : w
         );
@@ -132,11 +152,12 @@ export function OSProvider({ children }: { children: React.ReactNode }) {
         x: 100 + offset,
         y: 100 + offset,
         data,
+        workspace: activeWorkspace,
       };
       
       return [...curr, newWindow];
     });
-  }, []);
+  }, [activeWorkspace]);
 
   const closeWindow = useCallback((id: string) => {
     setWindows((curr) => curr.filter((w) => w.id !== id));
@@ -184,7 +205,8 @@ export function OSProvider({ children }: { children: React.ReactNode }) {
         height: topH,
         x: padding,
         y: topSpace + padding,
-        data: { projectId }
+        data: { projectId },
+        workspace: activeWorkspace
       });
 
       newWindows.push({
@@ -198,7 +220,8 @@ export function OSProvider({ children }: { children: React.ReactNode }) {
         height: topH,
         x: padding + halfW + gap,
         y: topSpace + padding,
-        data: { projectId }
+        data: { projectId },
+        workspace: activeWorkspace
       });
 
       newWindows.push({
@@ -212,7 +235,8 @@ export function OSProvider({ children }: { children: React.ReactNode }) {
         height: 600,
         x: 100,
         y: 100,
-        data: { projectId }
+        data: { projectId },
+        workspace: activeWorkspace
       });
 
       newWindows.push({
@@ -226,13 +250,14 @@ export function OSProvider({ children }: { children: React.ReactNode }) {
         height: termH,
         x: padding,
         y: topSpace + padding + topH + gap,
-        data: { projectId }
+        data: { projectId },
+        workspace: activeWorkspace
       });
 
       setWindows(newWindows);
       highestZIndexRef.current = nextZ;
     }, 100);
-  }, []);
+  }, [activeWorkspace]);
   const applyWorkspaceLayout = useCallback((layout: 'creative-split') => {
     if (layout === 'creative-split') {
       const padding = 40;
@@ -265,7 +290,8 @@ export function OSProvider({ children }: { children: React.ReactNode }) {
                 width: 400,
                 height: 400,
                 x: 0,
-                y: 0
+                y: 0,
+                workspace: activeWorkspace
              });
            }
         });
@@ -286,11 +312,17 @@ export function OSProvider({ children }: { children: React.ReactNode }) {
       });
       highestZIndexRef.current = nextZ;
     }
-  }, []);
+  }, [activeWorkspace]);
 
   const value = useMemo(() => ({
+    currentUser,
+    setCurrentUser,
     windows,
     snapshots,
+    performanceMode,
+    activeWorkspace,
+    setActiveWorkspace,
+    setPerformanceMode,
     openWindow,
     closeWindow,
     focusWindow,
@@ -302,7 +334,7 @@ export function OSProvider({ children }: { children: React.ReactNode }) {
     saveSnapshot,
     restoreSnapshot,
     wipeSession
-  }), [windows, snapshots, openWindow, closeWindow, focusWindow, minimizeWindow, maximizeWindow, updateWindowDimensions, applyWorkspaceLayout, loadProject, saveSnapshot, restoreSnapshot, wipeSession]);
+  }), [currentUser, windows, snapshots, performanceMode, activeWorkspace, openWindow, closeWindow, focusWindow, minimizeWindow, maximizeWindow, updateWindowDimensions, applyWorkspaceLayout, loadProject, saveSnapshot, restoreSnapshot, wipeSession]);
 
   return <OSContext.Provider value={value}>{children}</OSContext.Provider>;
 }

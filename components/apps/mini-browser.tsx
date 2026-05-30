@@ -1,13 +1,15 @@
 'use client';
 
 import React, { useState } from 'react';
-import { OSWindow } from '@/lib/os-context';
+import { OSWindow, useOS } from '@/lib/os-context';
 import { ArrowLeft, ArrowRight, RotateCw, Home, Lock, ExternalLink, Search } from 'lucide-react';
 
 export function MiniBrowser({ window }: { window: OSWindow }) {
   const [url, setUrl] = useState(window.data?.url || '');
   const [inputUrl, setInputUrl] = useState(window.data?.url || '');
   const [isIframeLoaded, setIsIframeLoaded] = useState(false);
+
+  const { performanceMode } = useOS();
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -128,12 +130,32 @@ export function MiniBrowser({ window }: { window: OSWindow }) {
          ) : (
            <div className="w-full h-full relative">
               {/* Optional overlay message if they complain about blocked iframes */}
-             <iframe 
-               src={url} 
-               className="w-full h-full border-none bg-white absolute inset-0 z-20" 
-               title="Browser Content"
-               sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-             />
+             {url && ['figma.com', 'framer.com', 'github.com', 'x.com', 'twitter.com', 'linkedin.com'].some(domain => {
+               try {
+                 const hostname = new URL(url).hostname;
+                 return hostname === domain || hostname.endsWith(`.${domain}`);
+               } catch (e) {
+                 return false;
+               }
+             }) ? (
+               <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-slate-50 text-slate-800 p-8 text-center">
+                 <Lock className="w-12 h-12 text-slate-400 mb-6" />
+                 <h2 className="text-2xl font-semibold mb-2">Can&apos;t Embed This Page</h2>
+                 <p className="text-slate-500 max-w-md mb-8">
+                   For security reasons, this site does not allow itself to be embedded within other applications.
+                 </p>
+                 <a href={url} target="_blank" rel="noopener noreferrer" className="bg-black text-white px-6 py-3 rounded-full flex items-center gap-2 hover:bg-slate-800 transition-colors">
+                   Open in New Tab <ExternalLink className="w-4 h-4" />
+                 </a>
+               </div>
+             ) : (
+               <iframe 
+                 src={url} 
+                 className="w-full h-full border-none bg-white absolute inset-0 z-20" 
+                 title="Browser Content"
+                 sandbox="allow-scripts allow-same-origin allow-forms allow-popups" loading={performanceMode === 'light' ? 'lazy' : 'eager'}
+               />
+             )}
            </div>
          )}
       </div>

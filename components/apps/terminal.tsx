@@ -3,9 +3,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { OSWindow, useOS } from '@/lib/os-context';
 import { motion, AnimatePresence } from 'motion/react';
-import { Terminal as TerminalIcon, Search as SearchIcon, Image as ImageIcon, Folder, ExternalLink, Command } from 'lucide-react';
+import { Terminal as TerminalIcon, Search as SearchIcon, Image as ImageIcon, Folder, ExternalLink, Command, Cpu } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { get, set } from 'idb-keyval';
+import { generateTerminalResponse } from '@/app/actions';
 
 type TerminalEntry = {
   id: string;
@@ -34,20 +35,23 @@ function parseCommand(input: string) {
 }
 
 export function TerminalBox({ window }: { window: OSWindow }) {
-  const { openWindow, loadProject } = useOS();
+  const { openWindow, loadProject, performanceMode, setPerformanceMode } = useOS();
   const [history, setHistory] = useState<TerminalEntry[]>([
-    { id: '1', type: 'system', content: 'ANICHISOM OS // COMMAND LINE INTERFACE' },
+    { id: '1', type: 'system', content: 'ANICHISOM OS // EDGE TERMINAL v1.0.4' },
     { id: '2', type: 'system', content: 'Type "help" for a list of available commands.' }
   ]);
   const [input, setInput] = useState('');
+  const [cwd, setCwd] = useState('/home/user');
   const [commandHistory, setCommandHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
+  const [isProcessing, setIsProcessing] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // --- Core Command Registry --- //
-  const executeCommand = (rawInput: string) => {
-    if (!rawInput.trim()) return;
+  const executeCommand = async (rawInput: string) => {
+    if (!rawInput.trim() || isProcessing) return;
 
     // Handle history replay (!23)
     if (rawInput.startsWith('!') && rawInput.length > 1) {
@@ -67,63 +71,126 @@ export function TerminalBox({ window }: { window: OSWindow }) {
     const { root, args, flags } = parseCommand(rawInput);
     
     let result: Partial<TerminalEntry> | null = null;
+    setIsProcessing(true);
 
     try {
       switch (root) {
         case 'help':
           result = {
             type: 'output',
-            content: `COMMAND REGISTRY:
-  open [app]                Launch an application (files, browser, campaign, moodboard)
-  create [resource] [name]  Create a new resource (campaign, moodboard, note)
-  search [type] [query]     Query the system (assets, ideas)
-  history                   Show command history
+            content: `SYSTEM COMMANDS:
+  help                      Show this help message
   clear                     Clear the terminal screen
+  history                   Show command history
   whoami                    Identify current user
-  
-CREATIVE COMMANDS:
-  campaign new "[name]"     Launch Campaign Lab with a new campaign context
-  moodboard add "[query]"   Search and insert assets into your moodboard
-  design new "[concept]"    Bootstrap a new design canvas`
+  pwd                       Print working directory
+  cd [dir]                  Change directory
+  ls                        List directory contents
+  date                      Show current date and time
+  echo [text]               Print text to terminal
+  theme [light|heavy]       Switch OS performance mode
+
+AI GATEWAY:
+  ai [prompt]               Query the integrated foundation model natively
+
+APP & CREATIVE COMMANDS:
+  open [app]                Launch an app (files, browser, campaign, moodboard)
+  campaign new "[name]"     Launch Campaign Lab with a new context
+  moodboard add "[query]"   Search and insert assets into your moodboard`
           };
           break;
         case 'clear':
           setHistory([]);
+          setIsProcessing(false);
           return;
         case 'history':
-          result = {
-            type: 'output',
-            content: commandHistory.map((cmd, i) => `  ${i}  ${cmd}`).join('\n')
-          };
+          result = { type: 'output', content: commandHistory.map((cmd, i) => `  ${i}  ${cmd}`).join('\n') };
           break;
         case 'whoami':
-          result = { type: 'output', content: 'ANICHISOM. Creative Director.' };
+          result = { type: 'output', content: 'ANICHISOM. Root User.' };
           break;
+        case 'date':
+          result = { type: 'output', content: new Date().toString() };
+          break;
+        case 'pwd':
+          result = { type: 'output', content: cwd };
+          break;
+        case 'echo':
+          result = { type: 'output', content: args.join(' ') };
+          break;
+        case 'cd':
+          const targetDir = args[0] || '/home/user';
+          if (targetDir === '..' && cwd !== '/') {
+             setCwd(cwd.split('/').slice(0, -1).join('/') || '/');
+          } else if (targetDir.startsWith('/')) {
+             setCwd(targetDir);
+          } else {
+             setCwd(cwd === '/' ? `/${targetDir}` : `${cwd}/${targetDir}`);
+          }
+          break;
+        case 'ls':
+          if (cwd === '/home/user' || cwd === '/') {
+            const savedFiles: any[] = await get('anichisom_os_files') || [];
+            if (savedFiles.length > 0) {
+              const fileList = savedFiles.map(f => {
+                const color = f.type === 'folder' || f.type === 'project' ? '\x1b[34m' : ''; // Blue-ish output mock if we had ANSI
+                const icon = f.type === 'folder' || f.type === 'project' ? '📁' : '📄';
+                return `${icon} ${f.name.padEnd(20)} ${f.size || '--'}  ${f.date || '--'}`;
+              }).join('\n');
+              result = { type: 'output', content: fileList };
+            } else {
+              result = { type: 'output', content: 'Empty directory.' };
+            }
+          } else {
+            result = { type: 'output', content: 'ls: cannot access directory: No such file or directory' };
+          }
+          break;
+        case 'theme':
+          const t = args[0];
+          if (t === 'light' || t === 'heavy') {
+            setPerformanceMode(t);
+            result = { type: 'output', content: `[SYSTEM] Switched UI performance mode to: ${t.toUpperCase()}` };
+          } else {
+            result = { type: 'output', content: `Current mode: ${performanceMode}. Valid options: light, heavy.` };
+          }
+          break;
+        case 'ai':
+        case 'gpt':
+          if (args.length === 0) throw new Error('Missing prompt. Usage: ai [your question]');
+          const prompt = args.join(' ');
+          const streamId = crypto.randomUUID();
+          // Add loading state
+          setHistory(prev => [...prev, { id: streamId, type: 'output', content: 'Querying AI Node...' }]);
+          
+          try {
+             // Let UI update immediately to show loading
+             await new Promise(r => setTimeout(r, 10)); 
+             const aiResponse = await generateTerminalResponse(prompt);
+             
+             setHistory(prev => prev.map(entry => 
+               entry.id === streamId 
+                 ? { ...entry, content: aiResponse.success ? aiResponse.text : `[ERROR] ${aiResponse.error}`, isError: !aiResponse.success } 
+                 : entry
+             ));
+          } catch (e: any) {
+             setHistory(prev => prev.map(entry => 
+               entry.id === streamId 
+                 ? { ...entry, content: '[NETWORK ERROR] Failed to reach AI Gateway.', isError: true } 
+                 : entry
+             ));
+          }
+          setIsProcessing(false);
+          return;
         case 'open':
           if (!args[0]) throw new Error('Missing target app or project.');
           const target = args[0].toLowerCase();
-          const validApps = ['files', 'browser', 'campaign', 'moodboard'];
+          const validApps = ['files', 'browser', 'campaign', 'moodboard', 'editor', 'office'];
           if (validApps.includes(target)) {
             openWindow(target);
             result = { type: 'output', content: `[SYSTEM] Booting process: ${target}.exe...` };
           } else {
-             // Assume it's a project
              loadProject(target);
              result = { type: 'output', content: `[SYSTEM] Loading project workspace: ${target}...` };
-          }
-          break;
-        case 'create':
-          if (args[0] === 'campaign') {
-             // Mock create campaign flow
-             const title = args[1] || 'Untitled Campaign';
-             openWindow('campaign');
-             result = { type: 'visual', visual: <VisualCard title={`Created Campaign: ${title}`} icon={<Folder className="w-5 h-5 text-neon-blue" />} meta="Campaign Lab Active" /> };
-          } else if (args[0] === 'moodboard') {
-             const title = args[1] || 'Untitled Moodboard';
-             openWindow('moodboard');
-             result = { type: 'visual', visual: <VisualCard title={`Initialized Moodboard: ${title}`} icon={<ImageIcon className="w-5 h-5 text-electric-purple" />} meta="Moodboard OS" /> };
-          } else {
-             throw new Error(`Unknown resource type: ${args[0]}`);
           }
           break;
         case 'campaign':
@@ -144,14 +211,6 @@ CREATIVE COMMANDS:
             throw new Error(`Invalid moodboard operation.`);
           }
           break;
-        case 'search':
-           if (args[0] === 'assets') {
-             const query = args.slice(1).join(' ');
-             result = { type: 'visual', visual: <SearchVisual query={query} /> };
-           } else {
-             result = { type: 'output', content: `Searching system for ${args.join(' ')}...` };
-           }
-           break;
         default:
           throw new Error(`Command not found: ${root}`);
       }
@@ -162,7 +221,9 @@ CREATIVE COMMANDS:
     if (result) {
       setHistory(prev => [...prev, { id: crypto.randomUUID(), ...result } as TerminalEntry]);
     }
+    setIsProcessing(false);
   };
+
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
@@ -192,11 +253,13 @@ CREATIVE COMMANDS:
   };
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+    }
   }, [history]);
 
   // Command palette autocomplete suggestion logic
-  const cmds = ['open', 'create moodboard', 'create campaign', 'search assets', 'campaign new', 'moodboard add', 'design new'];
+  const cmds = ['help', 'clear', 'history', 'whoami', 'pwd', 'cd', 'ls', 'date', 'echo', 'theme light', 'theme heavy', 'ai', 'open files', 'open browser', 'open editor', 'open office', 'campaign new', 'moodboard add'];
   const suggestion = input.trim() ? cmds.find(c => c.startsWith(input.toLowerCase().trim())) : '';
 
   return (
@@ -205,10 +268,14 @@ CREATIVE COMMANDS:
       onClick={() => inputRef.current?.focus()}
     >
       {/* Background glow effects */}
-      <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-electric-purple/5 blur-[120px] rounded-full pointer-events-none" />
-      <div className="absolute bottom-0 left-0 w-[300px] h-[300px] bg-neon-blue/5 blur-[100px] rounded-full pointer-events-none" />
+      {performanceMode === 'heavy' && (
+        <>
+          <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-electric-purple/5 blur-[120px] rounded-full pointer-events-none" />
+          <div className="absolute bottom-0 left-0 w-[300px] h-[300px] bg-neon-blue/5 blur-[100px] rounded-full pointer-events-none" />
+        </>
+      )}
 
-      <div className="flex-1 overflow-y-auto whitespace-pre-wrap hide-scrollbar pb-8 z-10">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto whitespace-pre-wrap hide-scrollbar pb-8 z-10 scroll-smooth">
         <AnimatePresence initial={false}>
           {history.map((entry) => (
             <motion.div 
