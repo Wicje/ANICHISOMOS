@@ -214,7 +214,7 @@ function SlidesEditor() {
       <div className="flex-1 overflow-auto bg-slate-100 flex items-center justify-center p-8">
          <div className="w-full max-w-3xl aspect-video bg-white shadow-xl flex flex-col p-12 justify-center items-center text-center">
             <h1 className="text-5xl font-bold text-slate-800 mb-6 focus:outline-none" contentEditable suppressContentEditableWarning>
-              Project "Edge"
+              Project &quot;Edge&quot;
             </h1>
             <p className="text-xl text-slate-500 focus:outline-none max-w-lg" contentEditable suppressContentEditableWarning>
               An infrastructure presentation explaining local-first architecture and node scaling.

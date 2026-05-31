@@ -1,7 +1,8 @@
 'use client';
 
 import React, { createContext, useContext, useState, useCallback, useMemo, useRef, useEffect } from 'react';
-import { get, set, clear } from 'idb-keyval';
+import { get, set, clear, del } from 'idb-keyval';
+import { auth, db, doc, getDoc, onAuthStateChanged, signOut } from '@/lib/firebase';
 
 export type OSWindow = {
   id: string;
@@ -71,6 +72,53 @@ export function OSProvider({ children }: { children: React.ReactNode }) {
     get('anichisom_os_snapshots').then(data => {
       if (data) setSnapshots(data);
     });
+
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        try {
+          const userDocRef = doc(db, 'users', user.uid);
+          const userDoc = await getDoc(userDocRef);
+          if (userDoc.exists()) {
+            const data = userDoc.data();
+            if (data.status === 'approved' || data.role === 'admin') {
+                const osUser = {
+                  id: user.uid,
+                  name: data.name || user.email?.split('@')[0] || 'User',
+                  role: data.role as OSRole || 'filmmaker'
+                };
+                setCurrentUser(osUser);
+                set('anichisom_os_user_cache', osUser);
+            } else {
+                // Not approved
+                setCurrentUser(null);
+                del('anichisom_os_user_cache'); // clear cache
+                signOut(auth);
+            }
+          } else {
+            setCurrentUser(null);
+            del('anichisom_os_user_cache');
+          }
+        } catch (error) {
+          // Allow fallback login if offline
+          const cachedUser = await get('anichisom_os_user_cache');
+          if (cachedUser && cachedUser.id === user.uid) {
+             setCurrentUser(cachedUser);
+          } else if (user.email?.toLowerCase() === 'anichisom4top@gmail.com') {
+             setCurrentUser({
+               id: user.uid,
+               name: user.email?.split('@')[0] || 'Admin',
+               role: 'admin'
+             });
+          } else {
+             setCurrentUser(null);
+          }
+        }
+      } else {
+        setCurrentUser(null);
+        del('anichisom_os_user_cache'); // Clear cached user
+      }
+    });
+    return () => unsubscribe();
   }, []);
 
   const saveSnapshot = useCallback((name: string) => {

@@ -32,27 +32,40 @@ export function CodeEditor({ window }: { window: OSWindow }) {
     setIsDeploying(true);
     setTimeout(() => {
        setIsDeploying(false);
+       
+       let executableCode = code;
+       // Extremely basic transpilation of exports for the iframe payload
+       executableCode = executableCode.replace(/export default function (\w+)/, 'function $1');
+       executableCode = executableCode.replace(/import .* from .*/g, ''); // strip imports
+       
        const htmlContent = `
+         <!DOCTYPE html>
          <html>
            <head>
+             <meta charset="utf-8">
+             <title>Staging Virtualizer</title>
+             <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+             <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+             <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
              <script src="https://cdn.tailwindcss.com"></script>
            </head>
            <body>
-             <div id="root" class="w-full h-full text-white bg-[#111] flex flex-col items-center justify-center p-8">
-               <div class="text-xs text-blue-400 font-mono mb-4 uppercase tracking-wider">Localhost Virtualizer Active</div>
-               <div class="p-8 border border-white/10 rounded-xl bg-white/5 backdrop-blur shadow-2xl max-w-lg w-full">
-                  <h2 class="text-2xl font-bold mb-2">Simulated Build Output</h2>
-                  <p class="text-white/60 mb-6 font-mono text-sm">Compiled from ${fileName}</p>
-                  <pre class="bg-black/50 p-4 rounded text-emerald-400 text-xs overflow-x-auto border border-white/5">Compiled Successfully in 143ms.\nRunning on http://localhost:3000</pre>
-               </div>
-             </div>
+             <div id="root" class="w-full h-full min-h-screen bg-white text-black"></div>
+             <script type="text/babel">
+               ${executableCode}
+               
+               // Attempt to find the main App component and render it
+               const ComponentToRender = typeof App !== 'undefined' ? App : () => <div class="p-8 text-red-500 font-mono">Export default 'App' function not found.</div>;
+               const root = ReactDOM.createRoot(document.getElementById('root'));
+               root.render(<ComponentToRender />);
+             </script>
            </body>
          </html>
        `;
        const blob = new Blob([htmlContent], { type: 'text/html' });
        const url = URL.createObjectURL(blob);
        openWindow('browser', `Staging: ${fileName}`, { url });
-    }, 1500);
+    }, 800);
   };
 
   return (

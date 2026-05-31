@@ -12,9 +12,11 @@ import { Moodboard } from '@/components/apps/moodboard';
 import { CodeEditor } from '@/components/apps/code-editor';
 import { ProductivitySuite } from '@/components/apps/productivity-suite';
 import { AIGateway } from '@/components/apps/ai-gateway';
+import { AdminPanel } from '@/components/apps/admin-panel';
 import { Terminal, Folder, Globe, Sparkles, Image as ImageIcon, Code2, Search, LayoutTemplate, Clock, Save, Cloud, RefreshCw, ShieldCheck, Power, Figma, Framer, HardDrive, Github, BookOpen, Zap, ZapOff, Briefcase, Brain, User, AlertCircle, Play } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { format } from 'date-fns';
+import { LoginScreen } from '@/components/login-screen';
 
 const APPS = {
   'terminal': { component: TerminalBox, icon: Terminal, title: 'Terminal', roles: ['admin', 'technician'] },
@@ -25,59 +27,8 @@ const APPS = {
   'code': { component: CodeEditor, icon: Code2, title: 'Code', roles: ['admin', 'technician'] },
   'office': { component: ProductivitySuite, icon: Briefcase, title: 'Office Suite', roles: ['admin', 'filmmaker'] },
   'ai-gateway': { component: AIGateway, icon: Brain, title: 'AI Gateway', roles: ['admin', 'technician'] },
+  'admin': { component: AdminPanel, icon: ShieldCheck, title: 'Access Control', roles: ['admin'] },
 };
-
-function LoginScreen() {
-  const { setCurrentUser } = useOS();
-  
-  const handleLogin = (role: OSRole, name: string) => {
-    setCurrentUser({ id: crypto.randomUUID(), name, role });
-  };
-
-  return (
-    <div className="fixed inset-0 w-full h-full bg-black flex flex-col items-center justify-center font-sans z-[9999]"
-      style={{ backgroundImage: 'url("https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=2564&auto=format&fit=crop")', backgroundSize: 'cover', backgroundPosition: 'center' }}>
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-md" />
-      
-      <div className="relative z-10 flex flex-col items-center gap-8">
-        <div className="text-white font-bold text-lg mb-8 flex flex-col items-center">
-           <div className="w-16 h-16 bg-white/10 rounded-full flex items-center justify-center mb-4 border border-white/20 shadow-2xl">
-              <span className="text-2xl"></span>
-           </div>
-           Anichisom OS
-        </div>
-        
-        <div className="flex gap-6">
-          {/* Admin User */}
-          <button onClick={() => handleLogin('admin', 'Anichisom (Admin)')} className="flex flex-col items-center gap-3 group">
-             <div className="w-24 h-24 rounded-full bg-white/10 flex items-center justify-center border-2 border-transparent group-hover:border-white/50 transition-all overflow-hidden relative">
-                <img src="https://api.dicebear.com/7.x/notionists/svg?seed=anichisom" className="w-full h-full object-cover" alt="Admin" />
-             </div>
-             <span className="text-white/80 font-medium text-sm group-hover:text-white">Anichisom</span>
-          </button>
-
-          {/* Filmmaker Workspace */}
-          <button onClick={() => handleLogin('filmmaker', 'Creative Partner')} className="flex flex-col items-center gap-3 group">
-             <div className="w-24 h-24 rounded-full bg-white/10 flex items-center justify-center border-2 border-transparent group-hover:border-white/50 transition-all overflow-hidden relative">
-                <div className="absolute inset-0 bg-blue-500/20 mix-blend-overlay" />
-                <Play className="w-8 h-8 text-white/70 group-hover:text-white" />
-             </div>
-             <span className="text-white/80 font-medium text-sm group-hover:text-white">Filmmaker</span>
-          </button>
-          
-          {/* Technician Workspace */}
-          <button onClick={() => handleLogin('technician', 'Ziklag Tech')} className="flex flex-col items-center gap-3 group">
-             <div className="w-24 h-24 rounded-full bg-white/10 flex items-center justify-center border-2 border-transparent group-hover:border-white/50 transition-all overflow-hidden relative">
-                <div className="absolute inset-0 bg-emerald-500/20 mix-blend-overlay" />
-                <Terminal className="w-8 h-8 text-white/70 group-hover:text-white" />
-             </div>
-             <span className="text-white/80 font-medium text-sm group-hover:text-white">Ziklag Tech</span>
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 const PROJECTS = {
   'nike-campaign': { title: 'Nike Campaign', type: 'project' },

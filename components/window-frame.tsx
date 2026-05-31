@@ -43,8 +43,8 @@ export function WindowFrame({ osWindow, children }: WindowFrameProps) {
   // and only use local state for intermediate resizing.
   const currentWidth = isResizing ? localSize.w : width;
   const currentHeight = isResizing ? localSize.h : height;
-  const currentX = x;
-  const currentY = y;
+  const currentX = isResizing ? localPosition.x : x;
+  const currentY = isResizing ? localPosition.y : y;
 
   // Is this window the currently focused one?
   const isActive = zIndex >= Math.max(...windows.map(w => w.zIndex));
@@ -59,6 +59,62 @@ export function WindowFrame({ osWindow, children }: WindowFrameProps) {
     );
   }
 
+  const startResize = (e: React.PointerEvent, edges: { top?: boolean; right?: boolean; bottom?: boolean; left?: boolean }) => {
+    e.stopPropagation();
+    if (isMaximized) return;
+    setIsResizing(true);
+    const startW = currentWidth;
+    const startH = currentHeight;
+    const startXPos = currentX;
+    const startYPos = currentY;
+    const startMouseX = e.clientX;
+    const startMouseY = e.clientY;
+
+    let newW = startW;
+    let newH = startH;
+    let newXPos = startXPos;
+    let newYPos = startYPos;
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      let deltaX = moveEvent.clientX - startMouseX;
+      let deltaY = moveEvent.clientY - startMouseY;
+
+      if (edges.right) {
+        newW = Math.max(300, startW + deltaX);
+      }
+      if (edges.bottom) {
+        newH = Math.max(200, startH + deltaY);
+      }
+      if (edges.left) {
+        newW = Math.max(300, startW - deltaX);
+        newXPos = startW - deltaX >= 300 ? startXPos + deltaX : startXPos + startW - 300;
+      }
+      if (edges.top) {
+        newH = Math.max(200, startH - deltaY);
+        newYPos = startH - deltaY >= 200 ? startYPos + deltaY : startYPos + startH - 200;
+      }
+
+      setLocalSize({ w: newW, h: newH });
+      setLocalPosition({ x: newXPos, y: newYPos });
+    };
+
+    const handlePointerUp = () => {
+      setIsResizing(false);
+      if (resizeHandlers.current.move) document.removeEventListener('pointermove', resizeHandlers.current.move);
+      if (resizeHandlers.current.up) document.removeEventListener('pointerup', resizeHandlers.current.up);
+      resizeHandlers.current.move = undefined;
+      resizeHandlers.current.up = undefined;
+      // Set the actual state with the locally captured new values
+      updateWindowDimensions(id, newXPos, newYPos, newW, newH);
+    };
+
+    resizeHandlers.current.move = handlePointerMove;
+    resizeHandlers.current.up = handlePointerUp;
+
+    document.addEventListener('pointermove', handlePointerMove);
+    document.addEventListener('pointerup', handlePointerUp);
+  };
+
   return (
     <motion.div
       ref={windowRef}
@@ -70,7 +126,7 @@ export function WindowFrame({ osWindow, children }: WindowFrameProps) {
         height: isMaximized ? 'calc(100vh - 28px)' : currentHeight,
         x: isMaximized ? 0 : currentX,
         y: isMaximized ? 28 : currentY,
-        transition: {
+        transition: isResizing ? { duration: 0 } : {
           type: "spring",
           stiffness: 300,
           damping: 30,
@@ -187,50 +243,36 @@ export function WindowFrame({ osWindow, children }: WindowFrameProps) {
         {children}
       </div>
       
-      {/* Absolute Bottom Right Resizer */}
+      {/* Edge & Corner Resizers */}
       {!isMaximized && (
-        <div 
-          className="absolute bottom-0 right-0 w-8 h-8 cursor-se-resize flex items-end justify-end p-1.5 opacity-30 hover:opacity-100 z-50 bg-black/10 rounded-tl-lg transition-opacity"
-          onPointerDown={(e) => {
-            e.stopPropagation();
-            if (isMaximized) return;
-            setIsResizing(true);
-            const startW = currentWidth;
-            const startH = currentHeight;
-            const startX = e.clientX;
-            const startY = e.clientY;
-
-            let newW = startW;
-            let newH = startH;
-
-            const handlePointerMove = (moveEvent: PointerEvent) => {
-              newW = Math.max(300, startW + (moveEvent.clientX - startX));
-              newH = Math.max(200, startH + (moveEvent.clientY - startY));
-              setLocalSize({ w: newW, h: newH });
-            };
-
-            const handlePointerUp = () => {
-              setIsResizing(false);
-              if (resizeHandlers.current.move) document.removeEventListener('pointermove', resizeHandlers.current.move);
-              if (resizeHandlers.current.up) document.removeEventListener('pointerup', resizeHandlers.current.up);
-              resizeHandlers.current.move = undefined;
-              resizeHandlers.current.up = undefined;
-              // Set the actual state with the locally captured new values
-              updateWindowDimensions(id, currentX, currentY, newW, newH);
-            };
-
-            resizeHandlers.current.move = handlePointerMove;
-            resizeHandlers.current.up = handlePointerUp;
-
-            document.addEventListener('pointermove', handlePointerMove);
-            document.addEventListener('pointerup', handlePointerUp);
-          }}
-        >
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="text-white">
-            <path d="M10 2V10H2" stroke="currentColor" strokeWidth="1" />
-            <path d="M6 6V10H2" stroke="currentColor" strokeWidth="1" />
-          </svg>
-        </div>
+        <>
+          {/* Top Edge */}
+          <div className="absolute top-0 left-2 right-2 h-2 cursor-n-resize z-50" onPointerDown={(e) => startResize(e, { top: true })} />
+          {/* Bottom Edge */}
+          <div className="absolute bottom-0 left-2 right-2 h-2 cursor-s-resize z-50" onPointerDown={(e) => startResize(e, { bottom: true })} />
+          {/* Left Edge */}
+          <div className="absolute top-2 bottom-2 left-0 w-2 cursor-w-resize z-50" onPointerDown={(e) => startResize(e, { left: true })} />
+          {/* Right Edge */}
+          <div className="absolute top-2 bottom-2 right-0 w-2 cursor-e-resize z-50" onPointerDown={(e) => startResize(e, { right: true })} />
+          
+          {/* Top Left Corner */}
+          <div className="absolute top-0 left-0 w-3 h-3 cursor-nw-resize z-50" onPointerDown={(e) => startResize(e, { top: true, left: true })} />
+          {/* Top Right Corner */}
+          <div className="absolute top-0 right-0 w-3 h-3 cursor-ne-resize z-50" onPointerDown={(e) => startResize(e, { top: true, right: true })} />
+          {/* Bottom Left Corner */}
+          <div className="absolute bottom-0 left-0 w-3 h-3 cursor-sw-resize z-50" onPointerDown={(e) => startResize(e, { bottom: true, left: true })} />
+          
+          {/* Absolute Bottom Right Resizer (Visual Icon) */}
+          <div 
+            className="absolute bottom-0 right-0 w-8 h-8 cursor-se-resize flex items-end justify-end p-1.5 opacity-30 hover:opacity-100 z-50 bg-black/10 rounded-tl-lg transition-opacity"
+            onPointerDown={(e) => startResize(e, { bottom: true, right: true })}
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="text-white">
+              <path d="M10 2V10H2" stroke="currentColor" strokeWidth="1" />
+              <path d="M6 6V10H2" stroke="currentColor" strokeWidth="1" />
+            </svg>
+          </div>
+        </>
       )}
     </motion.div>
   );
