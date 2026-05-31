@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { OSWindow, useOS } from '@/lib/os-context';
 import { FileText, Grid, Presentation, FileCode, Printer, Share2, Save, X, Type, Image as ImageIcon, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -127,28 +127,44 @@ export function ProductivitySuite({ window }: { window: OSWindow }) {
 }
 
 function WordEditor({ performanceMode }: { performanceMode: 'light' | 'heavy' }) {
-  // Heavy mode implies rich shadow, large canvas sizing. Light mode implies flat simple UI.
+  const [content, setContent] = useState<string>("Loading document...");
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    import('idb-keyval').then(({ get }) => {
+      get('anichisom_os_word_content').then((saved) => {
+        if (saved) {
+          setContent(saved);
+        } else {
+          setContent(`<h1>Manifesto for the Edge</h1><p>The future of software is not centralized. It is distributed, local-first, and owned by the user.</p><h2>Self-Hostable Infrastructure</h2><p>Users who prefer data independence can pull the open-source code via Docker.</p>`);
+        }
+        setLoaded(true);
+      });
+    });
+  }, []);
+
+  const handleInput = (e: React.FormEvent<HTMLDivElement>) => {
+    const newContent = e.currentTarget.innerHTML;
+    setContent(newContent);
+    import('idb-keyval').then(({ set }) => {
+      set('anichisom_os_word_content', newContent);
+    });
+  };
+
+  if (!loaded) return <div className="p-8 text-slate-500">Loading editor...</div>;
+
   return (
     <div className="w-full h-full overflow-auto p-4 md:p-8 flex justify-center custom-scrollbar">
       <div 
         className={cn(
-          "w-full max-w-[816px] min-h-[1056px] bg-white outline-none p-12 lg:p-24 transition-all duration-300",
+          "w-full max-w-[816px] min-h-[1056px] bg-white outline-none p-12 lg:p-24 transition-all duration-300 prose prose-slate max-w-none",
           performanceMode === 'heavy' ? "shadow-2xl border border-slate-200" : "shadow-sm border border-slate-100"
         )}
         contentEditable
         suppressContentEditableWarning
-      >
-        <h1 className="text-4xl font-bold tracking-tight mb-4">Manifesto for the Edge</h1>
-        <p className="text-slate-600 leading-relaxed mb-4">
-          The future of software is not centralized. It is distributed, local-first, and owned by the user. 
-          By bridging the gap between cloud and local execution, we empower creators to build without limits.
-        </p>
-        <h2 className="text-xl font-semibold mt-8 mb-2">Self-Hostable Infrastructure</h2>
-        <p className="text-slate-600 leading-relaxed">
-          Users who prefer data independence can pull the open-source code via Docker, allowing them to self-host 
-          their own instances on local NAS arrays. Zero-Setup cloud storage directly from your browser.
-        </p>
-      </div>
+        onInput={handleInput}
+        dangerouslySetInnerHTML={{ __html: content }}
+      />
     </div>
   );
 }

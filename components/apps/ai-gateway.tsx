@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { OSWindow, useOS } from '@/lib/os-context';
 import { Bot, Save, Server, Globe, Power, Zap, Lock } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -6,6 +6,32 @@ import { cn } from '@/lib/utils';
 export function AIGateway({ window }: { window: OSWindow }) {
   const [activeEndpoint, setActiveEndpoint] = useState('local');
   const [model, setModel] = useState('llama-3-8b');
+  const [openaiKey, setOpenaiKey] = useState('');
+  const [geminiKey, setGeminiKey] = useState('');
+  const [isLoaded, setIsLoaded] = useState(false);
+
+  useEffect(() => {
+    import('idb-keyval').then(({ get }) => {
+      get('anichisom_os_ai_config').then((config) => {
+        if (config) {
+          if (config.activeEndpoint) setActiveEndpoint(config.activeEndpoint);
+          if (config.model) setModel(config.model);
+          if (config.openaiKey) setOpenaiKey(config.openaiKey);
+          if (config.geminiKey) setGeminiKey(config.geminiKey);
+        }
+        setIsLoaded(true);
+      });
+    });
+  }, []);
+
+  const saveConfig = () => {
+    import('idb-keyval').then(({ set }) => {
+      set('anichisom_os_ai_config', { activeEndpoint, model, openaiKey, geminiKey });
+      alert("AI Configuration saved locally.");
+    });
+  };
+
+  if (!isLoaded) return <div className="p-8 text-[#888]">Loading AI configuration...</div>;
   
   return (
     <div className="w-full h-full flex flex-col bg-[#111] text-white font-sans overflow-hidden">
@@ -116,7 +142,7 @@ export function AIGateway({ window }: { window: OSWindow }) {
                    </div>
 
                    <div className="pt-6">
-                      <button className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2">
+                      <button onClick={saveConfig} className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2">
                          <Save className="w-4 h-4" /> Save Configuration
                       </button>
                    </div>
@@ -143,11 +169,13 @@ export function AIGateway({ window }: { window: OSWindow }) {
                 </div>
 
                 <div className="space-y-4">
-                   <div className="space-y-1">
+                    <div className="space-y-1">
                       <label className="text-xs text-[#888] font-medium">OpenAI API Key</label>
                       <input 
                          type="password" 
                          placeholder="sk-proj-..."
+                         value={openaiKey}
+                         onChange={(e) => setOpenaiKey(e.target.value)}
                          className="w-full bg-[#222] border border-[#333] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors"
                       />
                    </div>
@@ -156,11 +184,13 @@ export function AIGateway({ window }: { window: OSWindow }) {
                       <input 
                          type="password" 
                          placeholder="AIzaSy..."
+                         value={geminiKey}
+                         onChange={(e) => setGeminiKey(e.target.value)}
                          className="w-full bg-[#222] border border-[#333] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors"
                       />
                    </div>
                    <div className="pt-4">
-                      <button className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2">
+                      <button onClick={saveConfig} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2">
                          <Save className="w-4 h-4" /> Save Configuration
                       </button>
                    </div>
