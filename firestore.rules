@@ -5,22 +5,49 @@ service cloud.firestore {
     match /{document=**} {
       allow read, write: if false;
     }
+    
+    function isSignedIn() { return request.auth != null; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isAdmin() { return isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'; }
+
+    function isValidAppRegistry(data) {
+       return data.keys().hasAll(['title', 'url', 'icon']) &&
+              data.title is string && data.title.size() > 0 && data.title.size() <= 100 &&
+              data.url is string && data.url.size() > 0 && data.url.size() <= 500 &&
+              data.icon is string && data.icon.size() > 0 && data.icon.size() <= 50 &&
+              data.ownerId == request.auth.uid;
+    }
 
     match /users/{userId} {
-      allow create: if request.auth != null && request.auth.uid == userId && (
-        (request.resource.data.role == 'admin' && request.auth.token.email.lower() == 'anichisom4top@gmail.com') ||
-        (request.resource.data.role != 'admin')
+      // Allow creation explicitly if valid
+      allow create: if isSignedIn() && request.auth.uid == userId && (
+        (incoming().role == 'admin' && request.auth.token.email.lower() == 'anichisom4top@gmail.com') ||
+        (incoming().role != 'admin')
       );
       // Users can read themselves, admins can read all
-      allow read: if request.auth != null && (
-        request.auth.uid == userId ||
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      
+      // Update logic
+      allow update: if isSignedIn() && (
+        isAdmin() ||
+        (request.auth.uid == userId && !incoming().diff(existing()).affectedKeys().hasAny(['role', 'status']))
       );
-      // Only admins can update other users (to approve them)
-      allow update: if request.auth != null && (
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-        (request.auth.uid == userId && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'status']))
-      );
+    }
+    
+    match /apps/{appId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidAppRegistry(incoming());
+      allow update: if isSignedIn() && isValidAppRegistry(incoming()) && (existing().ownerId == request.auth.uid || isAdmin());
+      allow delete: if isSignedIn() && (existing().ownerId == request.auth.uid || isAdmin());
+    }
+
+    match /workspaces/{workspaceId} {
+      allow read: if isSignedIn() && (existing().ownerId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && incoming().ownerId == request.auth.uid && incoming().name is string;
+      allow update: if isSignedIn() && existing().ownerId == request.auth.uid && incoming().name is string;
+      allow delete: if isSignedIn() && (existing().ownerId == request.auth.uid || isAdmin());
     }
   }
 }

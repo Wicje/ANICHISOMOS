@@ -1,152 +1,92 @@
-'use client';
-
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useOS, OSRole } from '@/lib/os-context';
-import { auth, signInWithEmailAndPassword, createUserWithEmailAndPassword, doc, getDoc, setDoc, sendPasswordResetEmail, db } from '@/lib/firebase';
-import { AlertCircle, Loader2, ChevronLeft } from 'lucide-react';
+import { Power, Globe, Key, UserCircle, ChevronLeft, AlertCircle, Loader2 } from 'lucide-react';
+import { googleSignIn, db, doc, setDoc, getDoc } from '@/lib/firebase';
 
-const PROFILES = [
-  { id: 'admin', name: 'Administrator', icon: '', color: 'bg-white/20 text-white', defaultEmail: 'anichisom4top@gmail.com' },
-  { id: 'ziklag', name: 'Ziklag Team', icon: 'Z', color: 'bg-blue-500/20 text-blue-200', defaultEmail: '' },
-  { id: 'filmmaker', name: 'Filmmaker', icon: 'F', color: 'bg-rose-500/20 text-rose-200', defaultEmail: '' },
+const PROFILES: { id: OSRole, name: string, icon: string, color: string }[] = [
+  { id: 'admin', name: 'Admin', icon: '⚡️', color: 'bg-emerald-500/20 text-emerald-400' },
+  { id: 'filmmaker', name: 'Filmmaker', icon: '🎬', color: 'bg-blue-500/20 text-blue-400' },
+  { id: 'technician', name: 'Technician', icon: '⚙️', color: 'bg-rose-500/20 text-rose-400' },
 ];
 
 export function LoginScreen() {
   const { setCurrentUser } = useOS();
+  const [step, setStep] = useState<'profiles' | 'login'>('profiles');
+  const [selectedProfile, setSelectedProfile] = useState<typeof PROFILES[0] | null>(null);
   
-  const [step, setStep] = useState<'profiles' | 'auth'>('profiles');
-  const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
-
-  const [isLogin, setIsLogin] = useState(true);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [name, setName] = useState('');
   const [error, setError] = useState('');
-  const [message, setMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleProfileSelect = (profileId: string) => {
-    setSelectedProfileId(profileId);
-    const profile = PROFILES.find(p => p.id === profileId);
-    if (profile?.defaultEmail) {
-      setEmail(profile.defaultEmail);
-    } else {
-      setEmail('');
-    }
-    setPassword('');
-    setError('');
-    setMessage('');
-    setStep('auth');
+  const handleProfileSelect = (id: OSRole) => {
+    setSelectedProfile(PROFILES.find(p => p.id === id) || null);
+    setStep('login');
   };
 
   const handleBack = () => {
     setStep('profiles');
     setError('');
-    setMessage('');
   };
 
-  const selectedProfile = PROFILES.find(p => p.id === selectedProfileId);
-
-  const handleAuth = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    setMessage('');
+  const handleGoogleLogin = async () => {
+    if (!selectedProfile) return;
     setIsLoading(true);
-
+    setError('');
+    
     try {
-      if (isLogin) {
-        const userCredential = await signInWithEmailAndPassword(auth, email, password);
-        const user = userCredential.user;
-        
-        try {
-          const userDoc = await getDoc(doc(db, 'users', user.uid));
-          
-          if (userDoc.exists()) {
-            const data = userDoc.data();
-            if (data.status === 'pending') {
-              setError('Your account is pending admin approval.');
-              await auth.signOut();
-              setIsLoading(false);
-              return;
-            }
-            setCurrentUser({
-              id: user.uid,
-              name: data.name || user.email?.split('@')[0] || 'User',
-              role: data.role as OSRole || selectedProfileId || 'filmmaker'
-            });
-          } else {
-              setError('Account configuration error. Please contact a system administrator.');
-              await auth.signOut();
-          }
-        } catch (docErr: any) {
-          // Offline fallback
-          if (user.email?.toLowerCase() === 'anichisom4top@gmail.com') {
-             setCurrentUser({
-               id: user.uid,
-               name: user.email?.split('@')[0] || 'Admin',
-               role: 'admin'
-             });
-          } else {
-             setError('Failed to contact server. Please check your connection.');
-             await auth.signOut();
-          }
-        }
-      } else {
-        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-        const user = userCredential.user;
-        const isFirstAdmin = user.email?.toLowerCase() === 'anichisom4top@gmail.com';
+      const result = await googleSignIn();
+      if (result) {
+         const { user } = result;
+         const userRef = doc(db, 'users', user.uid);
+         const userDoc = await getDoc(userRef);
+         
+         const role = user.email?.toLowerCase() === 'anichisom4top@gmail.com' ? 'admin' : selectedProfile.id;
+         const finalStatus = role === 'admin' ? 'approved' : 'pending';
 
-        try {
-          await setDoc(doc(db, 'users', user.uid), {
-            uid: user.uid,
-            email: user.email,
-            name: name || user.email?.split('@')[0],
-            role: isFirstAdmin ? 'admin' : (selectedProfileId || 'filmmaker'),
-            status: isFirstAdmin ? 'approved' : 'pending'
-          });
-          await auth.signOut();
-          setIsLogin(true);
-          setMessage(isFirstAdmin ? 'Admin account created successfully! You can log in.' : 'Account created! Please wait for admin approval.');
-        } catch (err: any) {
-           setError('Account created, but could not contact the server to complete setup. Please try logging in later.');
-           await auth.signOut();
-        }
+         if (!userDoc.exists()) {
+            await setDoc(userRef, {
+               email: user.email,
+               name: user.displayName || user.email?.split('@')[0],
+               role: role,
+               status: finalStatus,
+               createdAt: Date.now(),
+               avatarUrl: user.photoURL || ''
+            });
+            if (finalStatus === 'pending') {
+               setError('Account created. Please wait for an admin to approve your account.');
+               setIsLoading(false);
+               return;
+            }
+         } else {
+            const data = userDoc.data();
+            if (data?.status !== 'approved' && data?.role !== 'admin') {
+               setError('Account pending approval from administrator.');
+               setIsLoading(false);
+               return;
+            }
+         }
+         
+         setCurrentUser({
+           id: user.uid,
+           name: user.displayName || user.email?.split('@')[0] || 'User',
+           role: role as OSRole,
+           avatarUrl: user.photoURL || undefined
+         } as any);
       }
     } catch (err: any) {
-      if (err.code === 'auth/invalid-credential' || err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password') {
-          setError('Invalid email or password.');
-      } else if (err.code === 'auth/email-already-in-use') {
-          setError('An account with this email already exists.');
-      } else {
-          setError(err.message || 'An authentication error occurred.');
-      }
+      setError(err.message || 'Failed to login with Google');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleResetPassword = async () => {
-      if (!email) {
-          setError('Please enter your email to reset password.');
-          return;
-      }
-      setIsLoading(true);
-      setError('');
-      setMessage('');
-      try {
-          await sendPasswordResetEmail(auth, email);
-          setMessage('Password reset email sent (check spam folder).');
-      } catch (err: any) {
-          setError(err.message);
-      } finally {
-          setIsLoading(false);
-      }
-  };
-
   return (
-    <div className="fixed inset-0 w-full h-full bg-black flex flex-col items-center justify-center font-sans z-[9999]"
-      style={{ backgroundImage: 'url("https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=2564&auto=format&fit=crop")', backgroundSize: 'cover', backgroundPosition: 'center' }}>
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-md" />
+    <div className="fixed inset-0 bg-black flex items-center justify-center p-4">
+      {/* Dynamic Background */}
+      <div 
+        className="absolute inset-0 z-0 bg-cover bg-center bg-no-repeat opacity-40 blur-sm"
+        style={{ backgroundImage: 'url("https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=2564&auto=format&fit=crop")' }} 
+      />
+      <div className="absolute inset-0 z-0 bg-gradient-to-b from-black/20 via-black/80 to-black" />
       
       <div className="relative z-10 w-full max-w-sm flex flex-col items-center">
         {step === 'profiles' ? (
@@ -192,66 +132,30 @@ export function LoginScreen() {
                 </div>
             )}
 
-            {message && (
-                <div className="w-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm p-3 rounded-lg">
-                    {message}
-                </div>
-            )}
-
-            <form onSubmit={handleAuth} className="w-full flex flex-col gap-4">
-                {!isLogin && (
-                    <div className="flex flex-col gap-1.5">
-                        <label className="text-xs text-white/50 font-medium ml-1">Full Name</label>
-                        <input 
-                            required 
-                            type="text" 
-                            value={name}
-                            onChange={e => setName(e.target.value)}
-                            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-white/30 transition-colors"
-                            placeholder="Full Name"
-                        />
-                    </div>
-                )}
-                <div className="flex flex-col gap-1.5">
-                    <label className="text-xs text-white/50 font-medium ml-1">Email Address</label>
-                    <input 
-                        required 
-                        type="email" 
-                        value={email}
-                        onChange={e => setEmail(e.target.value)}
-                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-white/30 transition-colors"
-                        placeholder="name@example.com"
-                    />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                    <label className="text-xs text-white/50 font-medium ml-1">Password</label>
-                    <input 
-                        required 
-                        type="password" 
-                        value={password}
-                        onChange={e => setPassword(e.target.value)}
-                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-white/30 transition-colors"
-                        placeholder="••••••••"
-                    />
-                </div>
-
-                <button disabled={isLoading} type="submit" className="w-full bg-white text-black hover:bg-white/90 font-medium rounded-xl px-4 py-3 text-sm transition-colors mt-2 flex items-center justify-center">
-                    {isLoading ? <Loader2 className="w-4 h-4 animate-spin text-black/50" /> : (isLogin ? 'Log In' : 'Request Account')}
+            <div className="w-full flex flex-col gap-4 mt-2">
+                <button 
+                  disabled={isLoading} 
+                  onClick={handleGoogleLogin} 
+                  className="w-full bg-white text-black hover:bg-white/90 font-medium rounded-xl px-4 py-3 text-sm transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                >
+                    {isLoading ? <Loader2 className="w-4 h-4 animate-spin text-black/50" /> : (
+                      <>
+                        <Globe className="w-4 h-4" />
+                        Sign in with Google
+                      </>
+                    )}
                 </button>
-            </form>
-
-            <div className="w-full flex items-center justify-between mt-2 pt-6 border-t border-white/10">
-                <button onClick={() => { setIsLogin(!isLogin); setError(''); setMessage(''); }} className="text-xs text-white/50 hover:text-white transition-colors">
-                    {isLogin ? 'Create Account' : 'Back to Login'}
-                </button>
-                {isLogin && (
-                    <button onClick={handleResetPassword} className="text-xs text-white/50 hover:text-white transition-colors">
-                        Forgot Password?
-                    </button>
-                )}
             </div>
           </div>
         )}
+      </div>
+      
+      {/* Branding */}
+      <div className="absolute bottom-8 flex flex-col items-center gap-2 z-10 text-white/30 pointer-events-none">
+         <div className="flex items-center gap-2 font-mono text-xs tracking-widest">
+           <Power className="w-3 h-3" />
+           ANICHISOM OS [v1.0.4]
+         </div>
       </div>
     </div>
   );

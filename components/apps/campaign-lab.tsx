@@ -92,9 +92,13 @@ export function CampaignLab({ window }: { window: OSWindow }) {
   }, []);
 
   useEffect(() => {
+    let timeout: NodeJS.Timeout;
     if (isLoaded) {
-      set('anichisom_os_campaign_lab_v2', pages);
+      timeout = setTimeout(() => {
+        set('anichisom_os_campaign_lab_v2', pages);
+      }, 500);
     }
+    return () => clearTimeout(timeout);
   }, [pages, isLoaded]);
 
   const activePage = pages.find((p) => p.id === activePageId);

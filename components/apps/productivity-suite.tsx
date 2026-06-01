@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { OSWindow, useOS } from '@/lib/os-context';
 import { FileText, Grid, Presentation, FileCode, Printer, Share2, Save, X, Type, Image as ImageIcon, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -143,12 +143,17 @@ function WordEditor({ performanceMode }: { performanceMode: 'light' | 'heavy' })
     });
   }, []);
 
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   const handleInput = (e: React.FormEvent<HTMLDivElement>) => {
     const newContent = e.currentTarget.innerHTML;
     setContent(newContent);
-    import('idb-keyval').then(({ set }) => {
-      set('anichisom_os_word_content', newContent);
-    });
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = setTimeout(() => {
+      import('idb-keyval').then(({ set }) => {
+        set('anichisom_os_word_content', newContent);
+      });
+    }, 500);
   };
 
   if (!loaded) return <div className="p-8 text-slate-500">Loading editor...</div>;
@@ -170,8 +175,35 @@ function WordEditor({ performanceMode }: { performanceMode: 'light' | 'heavy' })
 }
 
 function SheetsEditor() {
+  const [data, setData] = useState<Record<string, string>>({});
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    import('idb-keyval').then(({ get }) => {
+      get('anichisom_os_sheets_content').then((saved) => {
+        if (saved) setData(saved);
+        setLoaded(true);
+      });
+    });
+  }, []);
+
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleChange = (cell: string, value: string) => {
+    const newData = { ...data, [cell]: value };
+    setData(newData);
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = setTimeout(() => {
+      import('idb-keyval').then(({ set }) => {
+        set('anichisom_os_sheets_content', newData);
+      });
+    }, 500);
+  };
+
   const cols = Array.from({ length: 15 }, (_, i) => String.fromCharCode(65 + i));
   const rows = Array.from({ length: 30 }, (_, i) => i + 1);
+
+  if (!loaded) return <div className="p-8 text-slate-500">Loading sheets...</div>;
 
   return (
     <div className="w-full h-full overflow-auto bg-white flex flex-col custom-scrollbar text-xs">
@@ -190,17 +222,20 @@ function SheetsEditor() {
             <div className="w-10 h-6 shrink-0 border-r border-slate-200 bg-slate-50 flex items-center justify-center text-[10px] text-slate-400 group-hover:bg-slate-200 group-hover:text-slate-600 sticky left-0 z-10">
               {r}
             </div>
-            {cols.map(c => (
+            {cols.map(c => {
+              const cellId = `${c}${r}`;
+              return (
               <div key={c} className="w-24 h-6 shrink-0 border-r border-slate-100 relative">
                 <input 
-                  defaultValue={r === 1 ? `Header ${c}` : r === 2 && c === 'A' ? '1250.00' : ''}
+                  value={data[cellId] !== undefined ? data[cellId] : (r === 1 ? `Header ${c}` : r === 2 && c === 'A' ? '1250.00' : '')}
+                  onChange={(e) => handleChange(cellId, e.target.value)}
                   className={cn(
                      "w-full h-full outline-none px-1 py-0.5 text-slate-700 focus:bg-blue-50/50 focus:ring-1 focus:ring-blue-500 focus:ring-inset",
                      r === 1 ? 'font-bold bg-slate-50' : 'bg-transparent'
                   )}
                 />
               </div>
-            ))}
+            )})}
           </div>
         ))}
       </div>
@@ -209,6 +244,47 @@ function SheetsEditor() {
 }
 
 function SlidesEditor() {
+  const [title, setTitle] = useState("Project \"Edge\"");
+  const [subtitle, setSubtitle] = useState("An infrastructure presentation explaining local-first architecture and node scaling.");
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    import('idb-keyval').then(({ get }) => {
+      get('anichisom_os_slides_content').then((saved) => {
+        if (saved) {
+          setTitle(saved.title || "");
+          setSubtitle(saved.subtitle || "");
+        }
+        setLoaded(true);
+      });
+    });
+  }, []);
+
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const saveContent = (t: string, s: string) => {
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = setTimeout(() => {
+      import('idb-keyval').then(({ set }) => {
+        set('anichisom_os_slides_content', { title: t, subtitle: s });
+      });
+    }, 500);
+  };
+
+  const handleTitleChange = (e: React.FormEvent<HTMLHeadingElement>) => {
+    const t = e.currentTarget.innerText;
+    setTitle(t);
+    saveContent(t, subtitle);
+  };
+
+  const handleSubtitleChange = (e: React.FormEvent<HTMLParagraphElement>) => {
+    const s = e.currentTarget.innerText;
+    setSubtitle(s);
+    saveContent(title, s);
+  };
+
+  if (!loaded) return <div className="p-8 text-slate-500">Loading slides...</div>;
+
   return (
     <div className="w-full h-full flex overflow-hidden">
       {/* Thumbnail Sidebar */}
@@ -220,7 +296,10 @@ function SlidesEditor() {
               "w-full aspect-video bg-white border rounded shadow-sm flex items-center justify-center cursor-pointer",
               s === 1 ? "border-amber-400 ring-1 ring-amber-400 focus:outline-none" : "border-slate-200"
             )}>
-               <div className="w-3/4 h-2 bg-slate-200 rounded mt-[-10px]" />
+               <div className="flex flex-col items-center gap-1 w-full p-2">
+                  <div className="w-3/4 h-1.5 bg-slate-200 rounded" />
+                  <div className="w-1/2 h-1 bg-slate-100 rounded" />
+               </div>
             </div>
           </div>
         ))}
@@ -229,11 +308,21 @@ function SlidesEditor() {
       {/* Main Canvas */}
       <div className="flex-1 overflow-auto bg-slate-100 flex items-center justify-center p-8">
          <div className="w-full max-w-3xl aspect-video bg-white shadow-xl flex flex-col p-12 justify-center items-center text-center">
-            <h1 className="text-5xl font-bold text-slate-800 mb-6 focus:outline-none" contentEditable suppressContentEditableWarning>
-              Project &quot;Edge&quot;
+            <h1 
+              className="text-5xl font-bold text-slate-800 mb-6 focus:outline-none" 
+              contentEditable 
+              suppressContentEditableWarning
+              onInput={handleTitleChange}
+            >
+              {title}
             </h1>
-            <p className="text-xl text-slate-500 focus:outline-none max-w-lg" contentEditable suppressContentEditableWarning>
-              An infrastructure presentation explaining local-first architecture and node scaling.
+            <p 
+              className="text-xl text-slate-500 focus:outline-none max-w-lg" 
+              contentEditable 
+              suppressContentEditableWarning
+              onInput={handleSubtitleChange}
+            >
+              {subtitle}
             </p>
          </div>
       </div>

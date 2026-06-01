@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { OSWindow, useOS } from '@/lib/os-context';
 import { FileCode, Play, Settings, RefreshCcw, Server } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { get, set } from 'idb-keyval';
 
 export function CodeEditor({ window }: { window: OSWindow }) {
   const { openWindow } = useOS();
@@ -25,6 +26,26 @@ export function CodeEditor({ window }: { window: OSWindow }) {
 
   const [code, setCode] = useState(getInitialCode(projectId, window.data?.content));
   const [isDeploying, setIsDeploying] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    get(`anichisom_os_code_${projectId}`).then((saved) => {
+      if (saved) {
+        setCode(saved);
+      }
+      setLoaded(true);
+    });
+  }, [projectId]);
+
+  const saveCodeRef = React.useRef<NodeJS.Timeout | null>(null);
+  const handleCodeChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const newCode = e.target.value;
+    setCode(newCode);
+    if (saveCodeRef.current) clearTimeout(saveCodeRef.current);
+    saveCodeRef.current = setTimeout(() => {
+        set(`anichisom_os_code_${projectId}`, newCode);
+    }, 500);
+  };
   
   const fileName = window.data?.filename || (projectId === 'portfolio-v3' ? 'kernel.ts' : projectId === 'tesla-redesign' ? 'ui.tsx' : 'app.tsx');
 
@@ -101,7 +122,7 @@ export function CodeEditor({ window }: { window: OSWindow }) {
         <div className="flex-1 relative">
           <textarea
             value={code}
-            onChange={(e) => setCode(e.target.value)}
+            onChange={handleCodeChange}
             spellCheck={false}
             className="w-full h-full bg-transparent border-none outline-none resize-none p-2 pt-2 leading-6 text-[#9cdcfe] custom-scrollbar focus:ring-0 whitespace-nowrap"
             style={{ tabSize: 2 }}

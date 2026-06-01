@@ -3,10 +3,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { OSWindow, useOS } from '@/lib/os-context';
 import { motion, AnimatePresence } from 'motion/react';
-import { Terminal as TerminalIcon, Search as SearchIcon, Image as ImageIcon, Folder, ExternalLink, Command, Cpu } from 'lucide-react';
+import { Terminal as TerminalIcon, Search as SearchIcon, Image as ImageIcon, Folder, ExternalLink, Command, Cpu, Users } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { get, set } from 'idb-keyval';
 import { generateTerminalResponse } from '@/app/actions';
+import io, { Socket } from 'socket.io-client';
 
 type TerminalEntry = {
   id: string;
@@ -37,8 +38,8 @@ function parseCommand(input: string) {
 export function TerminalBox({ window }: { window: OSWindow }) {
   const { openWindow, loadProject, performanceMode, setPerformanceMode } = useOS();
   const [history, setHistory] = useState<TerminalEntry[]>([
-    { id: '1', type: 'system', content: 'ANICHISOM OS // EDGE TERMINAL v1.0.4' },
-    { id: '2', type: 'system', content: 'Type "help" for a list of available commands.' }
+    { id: '1', type: 'system', content: 'ANICHISOM OS // MULTI-USER EDGE TERMINAL v1.0.4' },
+    { id: '2', type: 'system', content: 'Type "help" for a list of available commands. Session is synced.' }
   ]);
   const [input, setInput] = useState('');
   const [cwd, setCwd] = useState('/home/user');
@@ -48,6 +49,39 @@ export function TerminalBox({ window }: { window: OSWindow }) {
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const socketRef = useRef<Socket | null>(null);
+  const isSyncingRef = useRef(false);
+
+  useEffect(() => {
+    const socket = io();
+    socketRef.current = socket;
+    socket.emit('join-room', 'terminal-shared');
+
+    socket.on('sync-state', (state) => {
+      if (state && state.history) {
+         isSyncingRef.current = true;
+         setHistory(state.history);
+      }
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, []);
+
+  useEffect(() => {
+    let timeout: NodeJS.Timeout;
+    if (isSyncingRef.current) {
+       isSyncingRef.current = false;
+       return;
+    }
+    if (socketRef.current && history.length > 2) {
+       timeout = setTimeout(() => {
+         socketRef.current?.emit('update-state', { roomId: 'terminal-shared', state: { history } });
+       }, 500);
+    }
+    return () => clearTimeout(timeout);
+  }, [history]);
 
   // --- Core Command Registry --- //
   const executeCommand = async (rawInput: string) => {
@@ -267,6 +301,11 @@ APP & CREATIVE COMMANDS:
       className="w-full h-full bg-[#050505] text-[#f5f5f5] font-mono p-4 flex flex-col overflow-hidden shadow-2xl relative"
       onClick={() => inputRef.current?.focus()}
     >
+      <div className="absolute top-4 right-4 z-20 flex items-center gap-2 bg-white/10 px-2 py-1 rounded-md text-xs font-sans text-white/70">
+         <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+         <Users className="w-3 h-3" /> <span className="opacity-70">Shared Session</span>
+      </div>
+
       {/* Background glow effects */}
       {performanceMode === 'heavy' && (
         <>

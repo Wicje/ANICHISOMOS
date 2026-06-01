@@ -139,9 +139,13 @@ export function FileManager({ window }: { window: OSWindow }) {
   }, []);
 
   useEffect(() => {
+    let timeout: NodeJS.Timeout;
     if (isLoaded) {
-      set('anichisom_os_files', files);
+      timeout = setTimeout(() => {
+        set('anichisom_os_files', files);
+      }, 500); // debounce saving state
     }
+    return () => clearTimeout(timeout);
   }, [files, isLoaded]);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {

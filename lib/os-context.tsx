@@ -34,6 +34,7 @@ export type OSUser = {
   id: string;
   name: string;
   role: OSRole;
+  avatarUrl?: string; // Add avatar support
 };
 
 type OSContextType = {
@@ -81,10 +82,11 @@ export function OSProvider({ children }: { children: React.ReactNode }) {
           if (userDoc.exists()) {
             const data = userDoc.data();
             if (data.status === 'approved' || data.role === 'admin') {
-                const osUser = {
+                const osUser: OSUser = {
                   id: user.uid,
-                  name: data.name || user.email?.split('@')[0] || 'User',
-                  role: data.role as OSRole || 'filmmaker'
+                  name: data.name || user.displayName || user.email?.split('@')[0] || 'User',
+                  role: (data.role as OSRole) || 'filmmaker',
+                  avatarUrl: data.avatarUrl || user.photoURL || undefined
                 };
                 setCurrentUser(osUser);
                 set('anichisom_os_user_cache', osUser);

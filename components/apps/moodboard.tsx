@@ -73,6 +73,7 @@ export function Moodboard({ window }: { window: OSWindow }) {
   
   const socketRef = useRef<Socket | null>(null);
   const colorRef = useRef<string>('#000');
+  const isSyncingRef = useRef(false);
 
   const projectId = window.data?.projectId || 'global';
   const roomId = `moodboard-${projectId}`;
@@ -87,6 +88,7 @@ export function Moodboard({ window }: { window: OSWindow }) {
 
     socket.on('sync-state', (state) => {
       if (state && state.nodes) {
+         isSyncingRef.current = true;
          setNodes(state.nodes);
          if (state.comments) setComments(state.comments);
       }
@@ -170,12 +172,20 @@ export function Moodboard({ window }: { window: OSWindow }) {
 
   // Save to local storage
   useEffect(() => {
+    let timeout: NodeJS.Timeout;
     if (isLoaded) {
-      set(storageKey, { nodes, comments });
-      if (socketRef.current) {
-         socketRef.current.emit('update-state', { roomId, state: { nodes, comments } });
-      }
+      timeout = setTimeout(() => {
+        set(storageKey, { nodes, comments });
+        if (isSyncingRef.current) {
+          isSyncingRef.current = false;
+          return;
+        }
+        if (socketRef.current) {
+           socketRef.current.emit('update-state', { roomId, state: { nodes, comments } });
+        }
+      }, 500);
     }
+    return () => clearTimeout(timeout);
   }, [nodes, comments, isLoaded, roomId, storageKey]);
 
   const addText = () => {

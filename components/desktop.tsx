@@ -13,7 +13,7 @@ import { CodeEditor } from '@/components/apps/code-editor';
 import { ProductivitySuite } from '@/components/apps/productivity-suite';
 import { AIGateway } from '@/components/apps/ai-gateway';
 import { AdminPanel } from '@/components/apps/admin-panel';
-import { Terminal, Folder, Globe, Sparkles, Image as ImageIcon, Code2, Search, LayoutTemplate, Clock, Save, Cloud, RefreshCw, ShieldCheck, Power, Figma, Framer, HardDrive, Github, BookOpen, Zap, ZapOff, Briefcase, Brain, User, AlertCircle, Play } from 'lucide-react';
+import { Terminal, Folder, Globe, Sparkles, Image as ImageIcon, Code2, Search, LayoutTemplate, Clock, Save, Cloud, RefreshCw, ShieldCheck, Power, Figma, Framer, HardDrive, Github, BookOpen, Zap, ZapOff, Briefcase, Brain, User, AlertCircle, Play, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { format } from 'date-fns';
 import { LoginScreen } from '@/components/login-screen';
@@ -84,10 +84,23 @@ function OsSyncStatus() {
   );
 }
 
+import { collection, onSnapshot } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
+
 export function Desktop() {
   const { currentUser, setCurrentUser, windows, snapshots, performanceMode, setPerformanceMode, activeWorkspace, setActiveWorkspace, openWindow, minimizeWindow, focusWindow, applyWorkspaceLayout, loadProject, saveSnapshot, restoreSnapshot, wipeSession } = useOS();
   const [showSnapshots, setShowSnapshots] = useState(false);
   const [showActionCenter, setShowActionCenter] = useState(false);
+  const [customApps, setCustomApps] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    const unsub = onSnapshot(collection(db, 'apps'), (snap) => {
+      const apps = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setCustomApps(apps);
+    });
+    return () => unsub();
+  }, [currentUser]);
 
   if (!currentUser) {
     return <LoginScreen />;
@@ -112,7 +125,10 @@ export function Desktop() {
           <div className="font-bold text-white flex items-center gap-2 cursor-pointer">
             
           </div>
-          <div className="font-bold flex items-center cursor-default uppercase tracking-wider text-xs bg-white/20 px-2 py-0.5 rounded">
+          <div className="font-bold flex items-center cursor-default uppercase tracking-wider text-xs bg-white/20 px-2 py-0.5 rounded gap-2">
+            {currentUser.avatarUrl && (
+               <img src={currentUser.avatarUrl} alt="avatar" className="w-4 h-4 rounded-full" referrerPolicy="no-referrer" />
+            )}
             {currentUser.name}
           </div>
           <div className="hidden sm:flex gap-4">
@@ -233,6 +249,31 @@ export function Desktop() {
                  </div>
                  <div className="text-white text-xs font-medium text-center line-clamp-2 px-1 break-words drop-shadow-md group-focus:bg-blue-500/50 group-focus:px-2 group-focus:rounded flex items-center justify-center min-h-[32px]">
                    {service.title}
+                 </div>
+               </a>
+             );
+          })}
+          {customApps.map((app) => {
+             return (
+               <a 
+                 key={app.id} 
+                 href={app.url}
+                 target="_blank"
+                 rel="noopener noreferrer"
+                 onClick={(e) => {
+                   e.preventDefault();
+                 }}
+                 onDoubleClick={(e) => {
+                   e.preventDefault();
+                   openWindow('browser', `Web: ${app.title}`, { url: app.url });
+                 }}
+                 className="flex flex-col items-center gap-1 group w-24 outline-none border-none"
+               >
+                 <div className="w-16 h-16 bg-white/10 backdrop-blur-md rounded-2xl border border-white/20 flex items-center justify-center group-hover:bg-white/20 transition-colors shadow-lg relative">
+                   <Globe className={cn("w-8 h-8", app.color || 'text-white')} />
+                 </div>
+                 <div className="text-white text-xs font-medium text-center line-clamp-2 px-1 break-words drop-shadow-md group-focus:bg-blue-500/50 group-focus:px-2 group-focus:rounded flex items-center justify-center min-h-[32px]">
+                   {app.title}
                  </div>
                </a>
              );
