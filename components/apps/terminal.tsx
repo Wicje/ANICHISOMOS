@@ -7,7 +7,7 @@ import { Terminal as TerminalIcon, Search as SearchIcon, Image as ImageIcon, Fol
 import { cn } from '@/lib/utils';
 import { get, set } from 'idb-keyval';
 import { generateTerminalResponse } from '@/app/actions';
-import io, { Socket } from 'socket.io-client';
+import { db, doc, onSnapshot, setDoc } from '@/lib/firebase';
 
 type TerminalEntry = {
   id: string;
@@ -49,25 +49,26 @@ export function TerminalBox({ window }: { window: OSWindow }) {
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const socketRef = useRef<Socket | null>(null);
   const isSyncingRef = useRef(false);
+  const { currentUser } = useOS();
 
   useEffect(() => {
-    const socket = io();
-    socketRef.current = socket;
-    socket.emit('join-room', 'terminal-shared');
-
-    socket.on('sync-state', (state) => {
-      if (state && state.history) {
-         isSyncingRef.current = true;
-         setHistory(state.history);
+    if (!currentUser) return;
+    const terminalDocRef = doc(db, 'terminals', currentUser.id);
+    const unsub = onSnapshot(terminalDocRef, (snap) => {
+      const data = snap.data();
+      if (data && data.history) {
+        // filter out components (visuals cannot be persisted into firestore)
+        const safeHistory = data.history.map((h: any) => ({
+           id: h.id, type: h.type, content: h.content || null, isError: h.isError || false
+        }));
+        isSyncingRef.current = true;
+        setHistory(safeHistory);
       }
     });
 
-    return () => {
-      socket.disconnect();
-    };
-  }, []);
+    return () => unsub();
+  }, [currentUser]);
 
   useEffect(() => {
     let timeout: NodeJS.Timeout;
@@ -75,13 +76,18 @@ export function TerminalBox({ window }: { window: OSWindow }) {
        isSyncingRef.current = false;
        return;
     }
-    if (socketRef.current && history.length > 2) {
+    if (currentUser && history.length > 2) {
        timeout = setTimeout(() => {
-         socketRef.current?.emit('update-state', { roomId: 'terminal-shared', state: { history } });
+         const terminalDocRef = doc(db, 'terminals', currentUser.id);
+         // Exclude visual React nodes for serialization
+         const safeHistory = history.map(h => ({
+           id: h.id, type: h.type, content: h.content || null, isError: h.isError || false
+         }));
+         setDoc(terminalDocRef, { history: safeHistory }, { merge: true });
        }, 500);
     }
     return () => clearTimeout(timeout);
-  }, [history]);
+  }, [history, currentUser]);
 
   // --- Core Command Registry --- //
   const executeCommand = async (rawInput: string) => {

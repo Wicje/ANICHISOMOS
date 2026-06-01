@@ -49,5 +49,18 @@ service cloud.firestore {
       allow update: if isSignedIn() && existing().ownerId == request.auth.uid && incoming().name is string;
       allow delete: if isSignedIn() && (existing().ownerId == request.auth.uid || isAdmin());
     }
+
+    match /files/{fileId} {
+      allow read, delete: if isSignedIn() && (existing().ownerId == request.auth.uid || isAdmin());
+      allow create, update: if isSignedIn() && incoming().ownerId == request.auth.uid;
+    }
+
+    match /terminals/{userId} {
+      allow read, write: if isSignedIn() && userId == request.auth.uid;
+    }
+
+    match /moodboards/{roomId} {
+      allow read, write: if isSignedIn();
+    }
   }
 }

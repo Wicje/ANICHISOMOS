@@ -6,7 +6,7 @@ import { Folder, File as FileIcon, FileText, Image as ImageIcon, Video, Box, Sea
 import { cn } from '@/lib/utils';
 import { get, set } from 'idb-keyval';
 import { format } from 'date-fns';
-import { initAuth, googleSignIn, getAccessToken, logout } from '@/lib/firebase';
+import { initAuth, googleSignIn, getAccessToken, logout, db, collection, onSnapshot, setDoc, doc, deleteDoc as firestoreDeleteDoc } from '@/lib/firebase';
 
 type FileItem = {
   id: string;
@@ -28,7 +28,7 @@ const initialFiles: FileItem[] = [
 ];
 
 export function FileManager({ window }: { window: OSWindow }) {
-  const { loadProject, openWindow } = useOS();
+  const { loadProject, openWindow, currentUser } = useOS();
 
   const handleFileOpen = (file: FileItem) => {
     if (file.type === 'project' && file.projectId) {
@@ -128,25 +128,24 @@ export function FileManager({ window }: { window: OSWindow }) {
   };
 
   useEffect(() => {
-    get('anichisom_os_files').then((saved) => {
-      if (saved) {
-        setFiles(saved);
+    if (!currentUser) return;
+    const unsub = onSnapshot(collection(db, 'files'), (snap) => {
+      const dbFiles: FileItem[] = [];
+      snap.forEach(d => {
+        const data = d.data();
+        if (data.ownerId === currentUser.id) {
+           dbFiles.push(data as FileItem);
+        }
+      });
+      if (dbFiles.length === 0) {
+        setFiles(initialFiles); // visual placeholder
       } else {
-        setFiles(initialFiles);
+        setFiles(dbFiles);
       }
       setIsLoaded(true);
     });
-  }, []);
-
-  useEffect(() => {
-    let timeout: NodeJS.Timeout;
-    if (isLoaded) {
-      timeout = setTimeout(() => {
-        set('anichisom_os_files', files);
-      }, 500); // debounce saving state
-    }
-    return () => clearTimeout(timeout);
-  }, [files, isLoaded]);
+    return () => unsub();
+  }, [currentUser]);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const uploadedFiles = e.target.files;
@@ -161,22 +160,29 @@ export function FileManager({ window }: { window: OSWindow }) {
       }
       
       const reader = new FileReader();
-      reader.onload = (event) => {
+      reader.onload = async (event) => {
         let type: FileItem['type'] = 'unknown';
         if (file.type.startsWith('image/')) type = 'image';
         else if (file.type.startsWith('video/')) type = 'video';
         else if (file.type.startsWith('text/') || file.name.endsWith('.md')) type = 'doc';
         else if (file.name.endsWith('.fig') || file.name.endsWith('.sketch')) type = 'design';
 
-        const newFile: FileItem = {
-          id: crypto.randomUUID(),
+        const fileId = crypto.randomUUID();
+        const newFile = {
+          id: fileId,
           name: file.name,
           type,
           date: format(new Date(), 'MMM dd'),
           size: (file.size / 1024).toFixed(1) + ' KB',
-          content: event.target?.result as string
+          content: event.target?.result as string,
+          ownerId: currentUser?.id
         };
-        setFiles(prev => [newFile, ...prev]);
+        
+        try {
+          await setDoc(doc(db, 'files', fileId), newFile);
+        } catch (e: any) {
+          alert('Failed to save file to cloud: ' + e.message);
+        }
       };
       reader.readAsDataURL(file);
     });
@@ -201,7 +207,13 @@ export function FileManager({ window }: { window: OSWindow }) {
         }
       }
     } else {
-      setFiles(prev => prev.filter(f => f.id !== id));
+      if (!confirm("Are you sure you want to delete this file from your OS Cloud?")) return;
+      try {
+        await firestoreDeleteDoc(doc(db, 'files', id));
+      } catch (err: any) {
+         console.error('Failed to delete file', err);
+         alert('Error deleting file: ' + err.message);
+      }
     }
   };
 

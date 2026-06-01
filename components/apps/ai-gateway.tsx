@@ -1,130 +1,200 @@
-import React, { useState, useEffect } from 'react';
+'use client';
+
+import React, { useState, useEffect, useRef } from 'react';
 import { OSWindow, useOS } from '@/lib/os-context';
-import { Bot, Save, Server, Globe, Power, Zap, Lock } from 'lucide-react';
+import { Bot, Save, Server, Globe, Power, Zap, Lock, Send, User, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { generateChatResponse } from '@/app/actions';
+
+type Message = {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+};
 
 export function AIGateway({ window }: { window: OSWindow }) {
-  const [activeEndpoint, setActiveEndpoint] = useState('local');
-  const [model, setModel] = useState('llama-3-8b');
-  const [openaiKey, setOpenaiKey] = useState('');
-  const [geminiKey, setGeminiKey] = useState('');
+  const [activeTab, setActiveTab] = useState<'config' | 'chat'>('chat');
+  
+  // Chat state
+  const [messages, setMessages] = useState<Message[]>([
+    { id: '1', role: 'assistant', content: 'AI Gateway is online. Connecting to Gemini API (gemini-3.5-flash).' }
+  ]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Config state
+  const [model, setModel] = useState('gemini-3.5-flash');
   const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
     import('idb-keyval').then(({ get }) => {
       get('anichisom_os_ai_config').then((config) => {
         if (config) {
-          if (config.activeEndpoint) setActiveEndpoint(config.activeEndpoint);
           if (config.model) setModel(config.model);
-          if (config.openaiKey) setOpenaiKey(config.openaiKey);
-          if (config.geminiKey) setGeminiKey(config.geminiKey);
         }
         setIsLoaded(true);
       });
     });
   }, []);
 
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages, loading]);
+
   const saveConfig = () => {
     import('idb-keyval').then(({ set }) => {
-      set('anichisom_os_ai_config', { activeEndpoint, model, openaiKey, geminiKey });
+      set('anichisom_os_ai_config', { model });
       alert("AI Configuration saved locally.");
     });
   };
 
-  if (!isLoaded) return <div className="p-8 text-[#888]">Loading AI configuration...</div>;
+  const handleSend = async () => {
+    if (!input.trim() || loading) return;
+    const userMessage: Message = { id: crypto.randomUUID(), role: 'user', content: input };
+    setMessages(prev => [...prev, userMessage]);
+    setInput('');
+    setLoading(true);
+
+    const res = await generateChatResponse(userMessage.content, "You are Ziklag OS's internal AI Gateway assistant. Be helpful, concise, and futuristic.");
+    
+    setMessages(prev => [...prev, {
+      id: crypto.randomUUID(), 
+      role: 'assistant', 
+      content: res.success ? (res.text || '') : (res.error || 'Unknown error occurred.')
+    }]);
+    setLoading(false);
+  };
+
+  if (!isLoaded) return <div className="p-8 text-[#888]">Loading AI Gateway...</div>;
   
   return (
-    <div className="w-full h-full flex flex-col bg-[#111] text-white font-sans overflow-hidden">
+    <div className="w-full h-full flex flex-col bg-[#0a0a0a] text-white font-sans overflow-hidden">
       {/* Sidebar */}
       <div className="flex flex-1 overflow-hidden">
-        <div className="w-64 bg-[#1a1a1a] border-r border-[#333] flex flex-col">
-          <div className="p-4 border-b border-[#333]">
-            <h2 className="text-sm font-semibold flex items-center gap-2 text-primary">
-              <Bot className="w-4 h-4 text-emerald-400" />
-              AI Gateway Settings
+        <div className="w-64 bg-[#111] border-r border-[#222] flex flex-col shrink-0">
+          <div className="p-4 border-b border-[#222]">
+            <h2 className="text-sm font-semibold flex items-center gap-2 text-emerald-400">
+              <Bot className="w-4 h-4" />
+              AI Gateway Console
             </h2>
-            <p className="text-xs text-[#888] mt-1">Manage local and cloud LLM endpoints.</p>
+            <p className="text-xs text-[#888] mt-1">Live Gemini Integration.</p>
           </div>
           
           <div className="p-2 space-y-1">
             <button 
-              onClick={() => setActiveEndpoint('local')}
+              onClick={() => setActiveTab('chat')}
               className={cn(
                 "w-full text-left px-3 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors",
-                activeEndpoint === 'local' ? "bg-[#333] text-white" : "text-[#aaa] hover:bg-[#222]"
+                activeTab === 'chat' ? "bg-emerald-500/10 text-emerald-400 font-medium" : "text-[#aaa] hover:bg-[#222]"
               )}
             >
-              <Server className="w-4 h-4" />
-              Self-Hosted VPS (Ziklag)
+              <Zap className="w-4 h-4" />
+              Live Chat Tests
             </button>
             <button 
-              onClick={() => setActiveEndpoint('cloud')}
+              onClick={() => setActiveTab('config')}
               className={cn(
                 "w-full text-left px-3 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors",
-                activeEndpoint === 'cloud' ? "bg-[#333] text-white" : "text-[#aaa] hover:bg-[#222]"
+                activeTab === 'config' ? "bg-emerald-500/10 text-emerald-400 font-medium" : "text-[#aaa] hover:bg-[#222]"
               )}
             >
               <Globe className="w-4 h-4" />
-              Public Cloud (OpenAI/Gemini)
+              Gateway Settings
             </button>
           </div>
 
-          <div className="mt-auto p-4 border-t border-[#333]">
-            <div className="bg-[#222] p-3 rounded-lg border border-[#333]">
+          <div className="mt-auto p-4 border-t border-[#222]">
+            <div className="bg-[#1a1a1a] p-3 rounded-lg border border-[#333]">
                <div className="flex items-center gap-2 mb-2 text-emerald-400 text-xs font-semibold">
-                  <Zap className="w-3 h-3 fill-emerald-400" /> System Active
+                  <span className="relative flex h-2 w-2">
+                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                     <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                  Gemini API Connected
                </div>
                <div className="text-[10px] text-[#888]">
-                  CRDT Sync: Connected<br/>
-                  Cache: IndexedDB (42MB)
+                  Model: {model}<br/>
+                  Latency: ~400ms
                </div>
             </div>
           </div>
         </div>
 
         {/* Main Content */}
-        <div className="flex-1 bg-[#111] p-6 overflow-y-auto">
-          {activeEndpoint === 'local' ? (
-             <div className="max-w-2xl mx-auto space-y-6">
-                <div className="flex items-center justify-between border-b border-[#333] pb-4">
-                  <div>
-                    <h3 className="text-lg font-medium text-white flex items-center gap-2">
-                      <Lock className="w-5 h-5 text-emerald-500" />
-                      Private Agency Server
-                    </h3>
-                    <p className="text-xs text-[#888] mt-1">Self-hosted LLMs running on dedicated infrastructure.</p>
+        <div className="flex-1 bg-[#0a0a0a] flex flex-col overflow-hidden relative">
+          {activeTab === 'chat' ? (
+             <div className="flex-1 flex flex-col h-full absolute inset-0">
+               <div className="border-b border-white/5 p-4 flex items-center justify-between shrink-0 bg-[#0f0f0f]">
+                  <div className="flex items-center gap-2">
+                     <div className="w-6 h-6 rounded bg-emerald-500/20 flex items-center justify-center">
+                        <Bot className="w-4 h-4 text-emerald-400" />
+                     </div>
+                     <span className="text-sm font-medium">Gateway Assistant</span>
                   </div>
-                  <div className="flex items-center gap-2 bg-emerald-500/10 text-emerald-500 px-3 py-1 rounded-full text-xs font-medium border border-emerald-500/20">
-                     <span className="relative flex h-2 w-2">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                     </span>
-                     Online
+               </div>
+               
+               <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-6">
+                 {messages.map(msg => (
+                   <div key={msg.id} className={cn("flex gap-4 max-w-2xl", msg.role === 'user' ? "ml-auto flex-row-reverse" : "mr-auto")}>
+                     <div className={cn("w-8 h-8 rounded-full flex items-center justify-center shrink-0", msg.role === 'user' ? "bg-blue-500/20" : "bg-emerald-500/20")}>
+                        {msg.role === 'user' ? <User className="w-4 h-4 text-blue-400" /> : <Bot className="w-4 h-4 text-emerald-400" />}
+                     </div>
+                     <div className={cn("px-4 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap", msg.role === 'user' ? "bg-blue-600 text-white rounded-tr-sm" : "bg-[#1a1a1a] text-white border border-[#222] rounded-tl-sm")}>
+                       {msg.content}
+                     </div>
+                   </div>
+                 ))}
+                 {loading && (
+                   <div className="flex gap-4 mr-auto max-w-2xl">
+                     <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 bg-emerald-500/20">
+                        <Loader2 className="w-4 h-4 text-emerald-400 animate-spin" />
+                     </div>
+                     <div className="px-4 py-3 rounded-2xl bg-[#1a1a1a] text-[#888] border border-[#222] rounded-tl-sm flex items-center gap-2 text-sm text-emerald-400/70">
+                       Processing request...
+                     </div>
+                   </div>
+                 )}
+               </div>
+
+               <div className="p-4 bg-[#0f0f0f] border-t border-[#222] shrink-0">
+                  <div className="max-w-3xl mx-auto relative flex items-center">
+                    <input 
+                      type="text"
+                      value={input}
+                      onChange={e => setInput(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && handleSend()}
+                      disabled={loading}
+                      placeholder="Ask the AI Gateway anything..."
+                      className="w-full bg-[#1a1a1a] border border-[#333] rounded-full pl-6 pr-14 py-3 text-sm text-white focus:outline-none focus:border-emerald-500 transition-colors"
+                    />
+                    <button 
+                      onClick={handleSend}
+                      disabled={!input.trim() || loading}
+                      className="absolute right-2 p-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-[#333] disabled:text-[#888] text-white rounded-full transition-all"
+                    >
+                       <Send className="w-4 h-4" />
+                    </button>
                   </div>
+               </div>
+             </div>
+          ) : (
+             <div className="p-8 max-w-2xl mx-auto space-y-6 w-full absolute inset-0 overflow-y-auto">
+                <div>
+                  <h3 className="text-lg font-medium text-white flex items-center gap-2">
+                    <Server className="w-5 h-5 text-emerald-500" />
+                    Model Configuration
+                  </h3>
+                  <p className="text-xs text-[#888] mt-1">Select which model powers the internal Gateway and Terminal AI features.</p>
                 </div>
 
-                <div className="space-y-4">
+                <div className="space-y-4 pt-4 border-t border-[#222]">
                    <div className="space-y-1">
-                      <label className="text-xs text-[#888] font-medium">Endpoint URL</label>
-                      <input 
-                         type="text" 
-                         defaultValue="https://ai.ziklag.agency/v1"
-                         className="w-full bg-[#222] border border-[#333] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 transition-colors"
-                      />
-                   </div>
-                   <div className="space-y-1">
-                      <label className="text-xs text-[#888] font-medium">API Key / Auth Token</label>
-                      <input 
-                         type="password" 
-                         defaultValue="sk-ziklag-1234567890"
-                         className="w-full bg-[#222] border border-[#333] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 transition-colors"
-                      />
-                   </div>
-
-                   <div className="space-y-1 pt-2">
-                      <label className="text-xs text-[#888] font-medium">Active Model (via Ollama/vLLM)</label>
+                      <label className="text-xs text-[#888] font-medium">Active Model Framework</label>
                       <div className="grid grid-cols-2 gap-3 mt-1">
-                         {['llama-3-8b', 'mistral-large', 'qwen-coder', 'stablediffusion-xl'].map(m => (
+                         {['gemini-3.5-flash', 'gemini-1.5-pro', 'gemini-pro-vision', 'llama-3-local-mock'].map(m => (
                             <button
                                key={m}
                                onClick={() => setModel(m)}
@@ -132,7 +202,7 @@ export function AIGateway({ window }: { window: OSWindow }) {
                                   "px-4 py-3 rounded-lg border text-sm text-center transition-all",
                                   model === m 
                                     ? "border-emerald-500 bg-emerald-500/10 text-emerald-400" 
-                                    : "border-[#333] bg-[#222] text-[#aaa] hover:bg-[#2a2a2a]"
+                                    : "border-[#333] bg-[#1a1a1a] text-[#aaa] hover:bg-[#222]"
                                )}
                             >
                                {m}
@@ -142,56 +212,8 @@ export function AIGateway({ window }: { window: OSWindow }) {
                    </div>
 
                    <div className="pt-6">
-                      <button onClick={saveConfig} className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2">
-                         <Save className="w-4 h-4" /> Save Configuration
-                      </button>
-                   </div>
-                </div>
-             </div>
-          ) : (
-             <div className="max-w-2xl mx-auto space-y-6">
-               <div className="flex items-center justify-between border-b border-[#333] pb-4">
-                  <div>
-                    <h3 className="text-lg font-medium text-white flex items-center gap-2">
-                      <Globe className="w-5 h-5 text-blue-500" />
-                      Public Cloud Providers
-                    </h3>
-                    <p className="text-xs text-[#888] mt-1">Use for general queries, not safe for proprietary Ziklag data or client IP.</p>
-                  </div>
-                  <div className="flex items-center gap-2 bg-[#222] text-[#888] px-3 py-1 rounded-full text-xs font-medium border border-[#333]">
-                     Standby
-                  </div>
-                </div>
-
-                <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4 mb-4">
-                   <p className="text-red-400 text-xs font-medium uppercase tracking-wider mb-1">Security Warning</p>
-                   <p className="text-red-200/80 text-sm">Do not send unreleased campaign data or Ziklag firmware to public cloud endpoints. Doing so violates agency data policies.</p>
-                </div>
-
-                <div className="space-y-4">
-                    <div className="space-y-1">
-                      <label className="text-xs text-[#888] font-medium">OpenAI API Key</label>
-                      <input 
-                         type="password" 
-                         placeholder="sk-proj-..."
-                         value={openaiKey}
-                         onChange={(e) => setOpenaiKey(e.target.value)}
-                         className="w-full bg-[#222] border border-[#333] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors"
-                      />
-                   </div>
-                   <div className="space-y-1">
-                      <label className="text-xs text-[#888] font-medium">Google Gemini Key</label>
-                      <input 
-                         type="password" 
-                         placeholder="AIzaSy..."
-                         value={geminiKey}
-                         onChange={(e) => setGeminiKey(e.target.value)}
-                         className="w-full bg-[#222] border border-[#333] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors"
-                      />
-                   </div>
-                   <div className="pt-4">
-                      <button onClick={saveConfig} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2">
-                         <Save className="w-4 h-4" /> Save Configuration
+                      <button onClick={saveConfig} className="bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-2.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-2">
+                         <Save className="w-4 h-4" /> Save Preferences
                       </button>
                    </div>
                 </div>
@@ -202,3 +224,4 @@ export function AIGateway({ window }: { window: OSWindow }) {
     </div>
   );
 }
+

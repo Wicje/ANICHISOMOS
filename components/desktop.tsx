@@ -84,7 +84,7 @@ function OsSyncStatus() {
   );
 }
 
-import { collection, onSnapshot } from 'firebase/firestore';
+import { collection, onSnapshot, addDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
 export function Desktop() {
@@ -101,6 +101,19 @@ export function Desktop() {
     });
     return () => unsub();
   }, [currentUser]);
+
+  const handleAddApp = async () => {
+    const title = prompt("Enter App Name:");
+    const url = prompt("Enter App URL:");
+    if (!title || !url) return;
+    try {
+      await addDoc(collection(db, 'apps'), {
+        title, url, icon: 'Globe', ownerId: currentUser?.id, color: 'text-white'
+      });
+    } catch (e: any) {
+      alert("Failed to add app: " + e.message);
+    }
+  };
 
   if (!currentUser) {
     return <LoginScreen />;
@@ -211,7 +224,7 @@ export function Desktop() {
              return (
                <button 
                  key={id} 
-                 onDoubleClick={() => loadProject(id)}
+                 onClick={() => loadProject(id)}
                  className="flex flex-col items-center gap-1 group w-24 focus:outline-none"
                >
                  <div className="w-16 h-16 bg-white/10 backdrop-blur-md rounded-2xl border border-white/20 flex items-center justify-center group-hover:bg-white/20 transition-colors shadow-lg">
@@ -234,11 +247,6 @@ export function Desktop() {
                  target="_blank"
                  rel="noopener noreferrer"
                  onClick={(e) => {
-                   // Only open on double click to keep desktop paradigm
-                   // But keep the link href so right-clicking shows 'Open Link in Incognito Window'
-                   e.preventDefault();
-                 }}
-                 onDoubleClick={(e) => {
                    e.preventDefault();
                    openWindow('browser', `Web: ${service.title}`, { url: service.url });
                  }}
@@ -262,14 +270,14 @@ export function Desktop() {
                  rel="noopener noreferrer"
                  onClick={(e) => {
                    e.preventDefault();
-                 }}
-                 onDoubleClick={(e) => {
-                   e.preventDefault();
                    openWindow('browser', `Web: ${app.title}`, { url: app.url });
                  }}
                  className="flex flex-col items-center gap-1 group w-24 outline-none border-none"
                >
                  <div className="w-16 h-16 bg-white/10 backdrop-blur-md rounded-2xl border border-white/20 flex items-center justify-center group-hover:bg-white/20 transition-colors shadow-lg relative">
+                   {app.ownerId === currentUser.id && (
+                     <div className="absolute -top-1 -right-1 w-3 h-3 bg-blue-500 rounded-full border-2 border-black" title="Added by you"></div>
+                   )}
                    <Globe className={cn("w-8 h-8", app.color || 'text-white')} />
                  </div>
                  <div className="text-white text-xs font-medium text-center line-clamp-2 px-1 break-words drop-shadow-md group-focus:bg-blue-500/50 group-focus:px-2 group-focus:rounded flex items-center justify-center min-h-[32px]">
@@ -278,6 +286,12 @@ export function Desktop() {
                </a>
              );
           })}
+          <button onClick={handleAddApp} className="flex flex-col items-center gap-1 group w-24 focus:outline-none">
+             <div className="w-12 h-12 bg-white/5 backdrop-blur-md rounded-xl border border-white/10 border-dashed flex items-center justify-center group-hover:bg-white/10 transition-colors">
+               <Plus className="w-5 h-5 text-white/50 group-hover:text-white/80" />
+             </div>
+             <div className="text-white/50 text-[10px] font-medium text-center mt-1">Add App</div>
+          </button>
         </div>
 
         {/* Snapshots Menu */}

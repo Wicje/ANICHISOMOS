@@ -20,6 +20,9 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: 'ANICHISOM | Creative OS',
   description: 'Browser-based operating system for creative dominance.',
+  manifest: '/manifest.json',
+  themeColor: '#000000',
+  viewport: 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0'
 };
 
 export default function RootLayout({children}: {children: React.ReactNode}) {

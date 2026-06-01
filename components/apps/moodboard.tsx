@@ -6,7 +6,7 @@ import { motion, useDragControls } from 'motion/react';
 import { MousePointer2, GripHorizontal, Type, Image as ImageIcon, Trash2, Video, Link as LinkIcon, Upload, MessageSquare } from 'lucide-react';
 import { get, set } from 'idb-keyval';
 import { cn } from '@/lib/utils';
-import io, { Socket } from 'socket.io-client';
+import { db, doc, onSnapshot, setDoc } from '@/lib/firebase';
 
 type BoardNode = {
   id: string;
@@ -24,13 +24,6 @@ type Comment = {
   y: number;
   text: string;
   author: string;
-};
-
-type Cursor = {
-  id: string;
-  x: number;
-  y: number;
-  color: string;
 };
 
 function getEmbedDetails(url: string) {
@@ -64,14 +57,12 @@ const isImageUrl = (url: string) => /\.(jpeg|jpg|gif|png|webp|svg)($|\?)/i.test(
 export function Moodboard({ window }: { window: OSWindow }) {
   const [nodes, setNodes] = useState<BoardNode[]>([]);
   const [comments, setComments] = useState<Comment[]>([]);
-  const [cursors, setCursors] = useState<Cursor[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [camera, setCamera] = useState({ x: 0, y: 0, z: 1 });
   const [isPanning, setIsPanning] = useState(false);
   
-  const socketRef = useRef<Socket | null>(null);
   const colorRef = useRef<string>('#000');
   const isSyncingRef = useRef(false);
 
@@ -81,34 +72,21 @@ export function Moodboard({ window }: { window: OSWindow }) {
   
   useEffect(() => {
     colorRef.current = `hsl(${Math.round(Math.random() * 360)}, 100%, 50%)`;
-    const socket = io();
-    socketRef.current = socket;
-
-    socket.emit('join-room', roomId);
-
-    socket.on('sync-state', (state) => {
-      if (state && state.nodes) {
-         isSyncingRef.current = true;
-         setNodes(state.nodes);
-         if (state.comments) setComments(state.comments);
+    
+    // Subscribe to Firestore for real-time moodboard updates
+    const roomRef = doc(db, 'moodboards', roomId);
+    const unsub = onSnapshot(roomRef, (snap) => {
+      if (snap.exists()) {
+        const state = snap.data();
+        if (state && state.nodes) {
+           isSyncingRef.current = true;
+           setNodes(state.nodes);
+           if (state.comments) setComments(state.comments);
+        }
       }
     });
 
-    socket.on('cursor-update', (cursor: Cursor) => {
-      setCursors(prev => {
-        const existing = prev.find(c => c.id === cursor.id);
-        if (existing) return prev.map(c => c.id === cursor.id ? cursor : c);
-        return [...prev, cursor];
-      });
-    });
-    
-    socket.on('user-disconnected', (id) => {
-      setCursors(prev => prev.filter(c => c.id !== id));
-    });
-
-    return () => {
-      socket.disconnect();
-    };
+    return () => unsub();
   }, [roomId]);
 
   useEffect(() => {
@@ -180,9 +158,15 @@ export function Moodboard({ window }: { window: OSWindow }) {
           isSyncingRef.current = false;
           return;
         }
-        if (socketRef.current) {
-           socketRef.current.emit('update-state', { roomId, state: { nodes, comments } });
-        }
+        
+        // Sync to Firestore
+        const roomRef = doc(db, 'moodboards', roomId);
+        const stateToSync = { nodes, comments: comments || [] };
+        
+        // Filter out functions or invalid data if needed, but array should be clean
+        setDoc(roomRef, stateToSync, { merge: true }).catch(err => {
+           console.error("Firebase sync error", err);
+        });
       }, 500);
     }
     return () => clearTimeout(timeout);
@@ -310,16 +294,6 @@ export function Moodboard({ window }: { window: OSWindow }) {
   };
 
   const handlePointerMove = (e: React.PointerEvent) => {
-    if (socketRef.current) {
-       const rect = containerRef.current?.getBoundingClientRect();
-       if (rect) {
-         socketRef.current.emit('cursor-move', {
-            roomId,
-            cursor: { x: (e.clientX - rect.left - camera.x) / camera.z, y: (e.clientY - rect.top - camera.y) / camera.z, color: colorRef.current }
-         });
-       }
-    }
-    
     if (isPanning) {
       setCamera(prev => ({
         ...prev,
@@ -427,15 +401,6 @@ export function Moodboard({ window }: { window: OSWindow }) {
                rows={2}
                autoFocus={i === comments.length - 1}
              />
-          </div>
-        ))}
-
-        {cursors.map(cursor => (
-          <div key={cursor.id} className="absolute pointer-events-none z-50 flex items-start drop-shadow-md" style={{ left: cursor.x, top: cursor.y }}>
-            <MousePointer2 className="w-4 h-4 fill-current drop-shadow-sm" style={{ color: cursor.color }} />
-            <div className="bg-white/90 text-black text-[10px] px-1.5 py-0.5 rounded shadow-sm border border-black/10 ml-1 mt-3" style={{ borderLeftColor: cursor.color, borderLeftWidth: 2 }}>
-              Guest
-            </div>
           </div>
         ))}
       </div>
