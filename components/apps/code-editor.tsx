@@ -1,13 +1,14 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { OSWindow, useOS } from '@/lib/os-context';
-import { FileCode, Play, Settings, RefreshCcw, Server } from 'lucide-react';
+import { FileCode, Play, Settings, RefreshCcw, Server, Users } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { get, set } from 'idb-keyval';
+import { db, doc, onSnapshot, setDoc } from '@/lib/firebase';
+import Editor from '@monaco-editor/react';
 
 export function CodeEditor({ window }: { window: OSWindow }) {
-  const { openWindow } = useOS();
+  const { openWindow, currentUser } = useOS();
   const projectId = window.data?.projectId || 'default';
   
   const getInitialCode = (id: string, content?: string) => {
@@ -27,27 +28,55 @@ export function CodeEditor({ window }: { window: OSWindow }) {
   const [code, setCode] = useState(getInitialCode(projectId, window.data?.content));
   const [isDeploying, setIsDeploying] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const isSyncingRef = useRef(false);
+
+  const roomId = `code-${projectId}`;
 
   useEffect(() => {
-    get(`anichisom_os_code_${projectId}`).then((saved) => {
-      if (saved) {
-        setCode(saved);
+    // Subscribe to Firestore for real-time code updates
+    const roomRef = doc(db, 'codes', roomId);
+    const unsub = onSnapshot(roomRef, (snap) => {
+      if (snap.exists()) {
+        const state = snap.data();
+        if (state && state.code !== undefined && state.code !== code) {
+           isSyncingRef.current = true;
+           setCode(state.code);
+        }
       }
       setLoaded(true);
     });
-  }, [projectId]);
 
-  const saveCodeRef = React.useRef<NodeJS.Timeout | null>(null);
-  const handleCodeChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const newCode = e.target.value;
-    setCode(newCode);
+    return () => unsub();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomId]);
+
+  const saveCodeRef = useRef<NodeJS.Timeout | null>(null);
+  const handleCodeChange = (newCode: string | undefined) => {
+    const val = newCode || '';
+    setCode(val);
+    
+    if (isSyncingRef.current) {
+        isSyncingRef.current = false;
+        return;
+    }
+    
     if (saveCodeRef.current) clearTimeout(saveCodeRef.current);
     saveCodeRef.current = setTimeout(() => {
-        set(`anichisom_os_code_${projectId}`, newCode);
+        // Sync to cloud
+        const roomRef = doc(db, 'codes', roomId);
+        setDoc(roomRef, { code: val }, { merge: true }).catch(err => {
+            console.error("Firebase sync error", err);
+        });
     }, 500);
   };
   
   const fileName = window.data?.filename || (projectId === 'portfolio-v3' ? 'kernel.ts' : projectId === 'tesla-redesign' ? 'ui.tsx' : 'app.tsx');
+
+  useEffect(() => {
+    return () => {
+      if (saveCodeRef.current) clearTimeout(saveCodeRef.current);
+    };
+  }, []);
 
   const handleDeploy = () => {
     setIsDeploying(true);
@@ -61,7 +90,7 @@ export function CodeEditor({ window }: { window: OSWindow }) {
        
        const htmlContent = `
          <!DOCTYPE html>
-         <html>
+         <html lang="en">
            <head>
              <meta charset="utf-8">
              <title>Staging Virtualizer</title>
@@ -83,14 +112,21 @@ export function CodeEditor({ window }: { window: OSWindow }) {
            </body>
          </html>
        `;
-       const blob = new Blob([htmlContent], { type: 'text/html' });
-       const url = URL.createObjectURL(blob);
-       openWindow('browser', `Staging: ${fileName}`, { url });
+       const dataUrl = `data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`;
+       openWindow('browser', `Staging: ${fileName}`, { url: dataUrl });
     }, 800);
   };
 
   return (
-    <div className="w-full h-full flex flex-col bg-[#1e1e1e] text-[#d4d4d4] font-mono text-sm overflow-hidden shadow-2xl">
+    <div className="w-full h-full flex flex-col bg-[#1e1e1e] text-[#d4d4d4] font-mono text-sm overflow-hidden shadow-2xl relative">
+      {/* Shared Session Indicator */}
+      {currentUser && (
+          <div className="absolute top-12 right-6 z-20 flex items-center gap-2 bg-black/40 border border-white/10 px-2 py-1 rounded-md text-xs font-sans text-white/70 pointer-events-none">
+             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+             <Users className="w-3 h-3" /> <span className="opacity-70">Live Collaboration</span>
+          </div>
+      )}
+
       {/* Top Bar */}
       <div className="flex items-center justify-between p-2 bg-[#252526] border-b border-[#3c3c3c]">
         <div className="flex items-center gap-2 text-[#cccccc]">
@@ -100,7 +136,7 @@ export function CodeEditor({ window }: { window: OSWindow }) {
         <div className="flex items-center gap-2">
           <button className="flex items-center gap-1 px-2 py-1 bg-blue-600/80 hover:bg-blue-500 rounded text-white text-xs font-sans transition-colors" title="Deploy to Localhost Virtualizer" onClick={handleDeploy} disabled={isDeploying}>
             {isDeploying ? <RefreshCcw className="w-3 h-3 animate-spin" /> : <Server className="w-3 h-3" />}
-            <span>{isDeploying ? 'Deploying...' : 'Deploy to VPS'}</span>
+            <span>{isDeploying ? 'Deploying...' : 'Live Preview & Sandbox'}</span>
           </button>
           <button className="flex items-center gap-1 px-2 py-1 bg-green-700/80 hover:bg-green-600 rounded text-white text-xs font-sans transition-colors" title="Run Code">
             <Play className="w-3 h-3" />
@@ -110,24 +146,24 @@ export function CodeEditor({ window }: { window: OSWindow }) {
       </div>
       
       {/* Editor Area */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Line Numbers */}
-        <div className="w-12 shrink-0 bg-[#1e1e1e] border-r border-[#3c3c3c] select-none text-right pr-3 pt-2 text-[#858585] text-xs">
-          {code.split('\n').map((_, i) => (
-            <div key={i} className="leading-6">{i + 1}</div>
-          ))}
-        </div>
-        
-        {/* Text Area */}
-        <div className="flex-1 relative">
-          <textarea
+      <div className="flex-1 flex overflow-hidden relative">
+         <Editor
+            height="100%"
+            defaultLanguage={fileName.endsWith('.tsx') || fileName.endsWith('.ts') ? 'typescript' : 'javascript'}
+            theme="vs-dark"
             value={code}
             onChange={handleCodeChange}
-            spellCheck={false}
-            className="w-full h-full bg-transparent border-none outline-none resize-none p-2 pt-2 leading-6 text-[#9cdcfe] custom-scrollbar focus:ring-0 whitespace-nowrap"
-            style={{ tabSize: 2 }}
-          />
-        </div>
+            options={{
+              minimap: { enabled: false },
+              fontSize: 13,
+              fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace",
+              wordWrap: 'on',
+              formatOnPaste: true,
+              tabSize: 2,
+              scrollBeyondLastLine: false,
+              automaticLayout: true,
+            }}
+         />
       </div>
       
       {/* Status Bar */}

@@ -1,22 +1,24 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import dynamic from 'next/dynamic';
 import { useOS, OSRole, OSUser } from '@/lib/os-context';
 import { WindowFrame } from '@/components/window-frame';
 import { CommandPalette } from '@/components/command-palette';
-import { TerminalBox } from '@/components/apps/terminal';
-import { FileManager } from '@/components/apps/file-manager';
-import { MiniBrowser } from '@/components/apps/mini-browser';
-import { CampaignLab } from '@/components/apps/campaign-lab';
-import { Moodboard } from '@/components/apps/moodboard';
-import { CodeEditor } from '@/components/apps/code-editor';
-import { ProductivitySuite } from '@/components/apps/productivity-suite';
-import { AIGateway } from '@/components/apps/ai-gateway';
-import { AdminPanel } from '@/components/apps/admin-panel';
 import { Terminal, Folder, Globe, Sparkles, Image as ImageIcon, Code2, Search, LayoutTemplate, Clock, Save, Cloud, RefreshCw, ShieldCheck, Power, Figma, Framer, HardDrive, Github, BookOpen, Zap, ZapOff, Briefcase, Brain, User, AlertCircle, Play, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { format } from 'date-fns';
 import { LoginScreen } from '@/components/login-screen';
+
+const TerminalBox = dynamic(() => import('@/components/apps/terminal').then(mod => mod.TerminalBox), { ssr: false });
+const FileManager = dynamic(() => import('@/components/apps/file-manager').then(mod => mod.FileManager), { ssr: false });
+const MiniBrowser = dynamic(() => import('@/components/apps/mini-browser').then(mod => mod.MiniBrowser), { ssr: false });
+const CampaignLab = dynamic(() => import('@/components/apps/campaign-lab').then(mod => mod.CampaignLab), { ssr: false });
+const Moodboard = dynamic(() => import('@/components/apps/moodboard').then(mod => mod.Moodboard), { ssr: false });
+const CodeEditor = dynamic(() => import('@/components/apps/code-editor').then(mod => mod.CodeEditor), { ssr: false });
+const ProductivitySuite = dynamic(() => import('@/components/apps/productivity-suite').then(mod => mod.ProductivitySuite), { ssr: false });
+const AIGateway = dynamic(() => import('@/components/apps/ai-gateway').then(mod => mod.AIGateway), { ssr: false });
+const AdminPanel = dynamic(() => import('@/components/apps/admin-panel').then(mod => mod.AdminPanel), { ssr: false });
 
 const APPS = {
   'terminal': { component: TerminalBox, icon: Terminal, title: 'Terminal', roles: ['admin', 'technician'] },
@@ -64,11 +66,15 @@ function OsSyncStatus() {
 
   useEffect(() => {
     // Simulate periodic cloud syncing
+    let timeout: NodeJS.Timeout;
     const syncTimer = setInterval(() => {
       setIsSyncing(true);
-      setTimeout(() => setIsSyncing(false), 2000);
+      timeout = setTimeout(() => setIsSyncing(false), 2000);
     }, 15000);
-    return () => clearInterval(syncTimer);
+    return () => {
+      clearInterval(syncTimer);
+      if (timeout) clearTimeout(timeout);
+    };
   }, []);
 
   return isSyncing ? (
@@ -84,7 +90,7 @@ function OsSyncStatus() {
   );
 }
 
-import { collection, onSnapshot, addDoc } from 'firebase/firestore';
+import { collection, onSnapshot, addDoc, query, limit } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
 export function Desktop() {
@@ -95,7 +101,8 @@ export function Desktop() {
 
   useEffect(() => {
     if (!currentUser) return;
-    const unsub = onSnapshot(collection(db, 'apps'), (snap) => {
+    const q = query(collection(db, 'apps'), limit(100));
+    const unsub = onSnapshot(q, (snap) => {
       const apps = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setCustomApps(apps);
     });
@@ -140,7 +147,8 @@ export function Desktop() {
           </div>
           <div className="font-bold flex items-center cursor-default uppercase tracking-wider text-xs bg-white/20 px-2 py-0.5 rounded gap-2">
             {currentUser.avatarUrl && (
-               <img src={currentUser.avatarUrl} alt="avatar" className="w-4 h-4 rounded-full" referrerPolicy="no-referrer" />
+               // eslint-disable-next-line @next/next/no-img-element
+               <img src={currentUser.avatarUrl} alt="avatar" className="w-4 h-4 rounded-full" referrerPolicy="no-referrer" loading="lazy" />
             )}
             {currentUser.name}
           </div>

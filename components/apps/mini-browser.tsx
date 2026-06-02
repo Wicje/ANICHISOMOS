@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { OSWindow, useOS } from '@/lib/os-context';
 import { ArrowLeft, ArrowRight, RotateCw, Home, Lock, ExternalLink, Search } from 'lucide-react';
+import Image from 'next/image';
 
 export function MiniBrowser({ window }: { window: OSWindow }) {
   const [url, setUrl] = useState(window.data?.url || '');
@@ -81,7 +82,7 @@ export function MiniBrowser({ window }: { window: OSWindow }) {
                Celebrating four decades of culture. A live preview of the interactive campaign landing page.
              </p>
              <div className="w-full aspect-video bg-slate-100 rounded-xl overflow-hidden relative group">
-               <img src="https://picsum.photos/seed/nike/1000/600" className="object-cover w-full h-full" alt="Hero" />
+               <Image src="https://picsum.photos/seed/nike/1000/600" fill className="object-cover" alt="Hero" />
                <div className="absolute inset-x-0 bottom-0 p-8 bg-gradient-to-t from-black/80 to-transparent flex items-end">
                  <button className="bg-white text-black px-6 py-2 font-bold uppercase rounded-full text-xs">Buy Now</button>
                </div>
@@ -96,8 +97,8 @@ export function MiniBrowser({ window }: { window: OSWindow }) {
                <div className="w-64 h-full border border-white/10 rounded-2xl flex flex-col p-4 bg-white/5">
                  <div className="text-white font-mono text-sm">68° / Auto</div>
                </div>
-               <div className="flex-1 h-full border border-white/10 rounded-2xl p-4 bg-white/5">
-                 <img src="https://picsum.photos/seed/map/800/600" className="opacity-50 object-cover w-full h-full rounded-xl" />
+               <div className="flex-1 h-full border border-white/10 rounded-2xl p-4 bg-white/5 relative overflow-hidden">
+                 <Image src="https://picsum.photos/seed/map/800/600" fill className="opacity-50 object-cover rounded-xl" alt="Map" />
                </div>
              </div>
            </div>
@@ -112,13 +113,13 @@ export function MiniBrowser({ window }: { window: OSWindow }) {
                
                <div className="grid grid-cols-2 gap-8">
                  <div className="aspect-[4/3] bg-slate-100 rounded-lg flex items-center justify-center border border-slate-200 overflow-hidden relative group">
-                   <img src="https://picsum.photos/seed/design1/800/600" className="object-cover w-full h-full brightness-95 group-hover:scale-105 transition-transform duration-700" alt="Reference 1" />
+                   <Image src="https://picsum.photos/seed/design1/800/600" fill className="object-cover brightness-95 group-hover:scale-105 transition-transform duration-700" alt="Reference 1" />
                    <div className="absolute inset-x-0 bottom-0 p-4 bg-gradient-to-t from-black/80 to-transparent text-white opacity-0 group-hover:opacity-100 transition-opacity">
                      Ref: Brutalist typography
                    </div>
                  </div>
                  <div className="aspect-[4/3] bg-slate-100 rounded-lg flex items-center justify-center border border-slate-200 overflow-hidden relative group">
-                   <img src="https://picsum.photos/seed/design2/800/600" className="object-cover w-full h-full grayscale group-hover:grayscale-0 transition-all duration-700" alt="Reference 2" />
+                   <Image src="https://picsum.photos/seed/design2/800/600" fill className="object-cover grayscale group-hover:grayscale-0 transition-all duration-700" alt="Reference 2" />
                    <div className="absolute inset-x-0 bottom-0 p-4 bg-gradient-to-t from-black/80 to-transparent text-white opacity-0 group-hover:opacity-100 transition-opacity">
                      Ref: Glassmorphism layout
                    </div>

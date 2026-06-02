@@ -102,10 +102,10 @@ export function TerminalBox({ window }: { window: OSWindow }) {
     }
 
     const newCommandEntry: TerminalEntry = { id: crypto.randomUUID(), type: 'command', content: rawInput };
-    setHistory(prev => [...prev, newCommandEntry]);
+    setHistory(prev => [...prev, newCommandEntry].slice(-100));
     
     // Save to history
-    setCommandHistory(prev => [...prev, rawInput]);
+    setCommandHistory(prev => [...prev, rawInput].slice(-100));
     setHistoryIndex(-1);
 
     const { root, args, flags } = parseCommand(rawInput);

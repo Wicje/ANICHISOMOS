@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { OSWindow, useOS } from '@/lib/os-context';
-import { db, doc, updateDoc, collection, getDocs, setDoc, deleteDoc, sendPasswordResetEmail, auth, onSnapshot } from '@/lib/firebase';
+import { db, doc, updateDoc, collection, getDocs, setDoc, deleteDoc, sendPasswordResetEmail, auth, onSnapshot, query, limit } from '@/lib/firebase';
 import { ShieldCheck, UserCheck, UserX, Key, RefreshCw, Loader2, AppWindow, Plus, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -17,7 +17,8 @@ export function AdminPanel({ window }: { window: OSWindow }) {
   const fetchUsers = async () => {
     setLoading(true);
     try {
-      const qs = await getDocs(collection(db, 'users'));
+      const q = query(collection(db, 'users'), limit(500));
+      const qs = await getDocs(q);
       const loaded: any[] = [];
       qs.forEach(doc => {
         loaded.push({ id: doc.id, ...doc.data() });
@@ -35,7 +36,8 @@ export function AdminPanel({ window }: { window: OSWindow }) {
     fetchUsers();
     
     // Subscribe to apps collection
-    const unsubApps = onSnapshot(collection(db, 'apps'), (snap) => {
+    const appsQuery = query(collection(db, 'apps'), limit(200));
+    const unsubApps = onSnapshot(appsQuery, (snap) => {
       const loadedApps = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setApps(loadedApps);
     });

@@ -1,8 +1,9 @@
+import React from 'react';
+
 export default function NotFound() {
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-black text-white">
-      <h1 className="text-4xl font-bold">404</h1>
-      <p className="text-slate-400">Page not found</p>
+    <div className="bg-black text-white p-8">
+      <h1>404 - Not Found</h1>
     </div>
   );
 }

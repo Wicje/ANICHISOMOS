@@ -5,6 +5,7 @@ import { OSWindow, useOS } from '@/lib/os-context';
 import { FileText, Grid, Presentation, FileCode, Printer, Share2, Save, X, Type, Image as ImageIcon, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
+import DOMPurify from 'isomorphic-dompurify';
 
 type AppType = 'word' | 'sheets' | 'slides' | 'pdf';
 
@@ -156,6 +157,12 @@ function WordEditor({ performanceMode }: { performanceMode: 'light' | 'heavy' })
     }, 500);
   };
 
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    };
+  }, []);
+
   if (!loaded) return <div className="p-8 text-slate-500">Loading editor...</div>;
 
   return (
@@ -168,7 +175,7 @@ function WordEditor({ performanceMode }: { performanceMode: 'light' | 'heavy' })
         contentEditable
         suppressContentEditableWarning
         onInput={handleInput}
-        dangerouslySetInnerHTML={{ __html: content }}
+        dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(content) }}
       />
     </div>
   );
@@ -199,6 +206,12 @@ function SheetsEditor() {
       });
     }, 500);
   };
+
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    };
+  }, []);
 
   const cols = Array.from({ length: 15 }, (_, i) => String.fromCharCode(65 + i));
   const rows = Array.from({ length: 30 }, (_, i) => i + 1);
@@ -270,6 +283,12 @@ function SlidesEditor() {
       });
     }, 500);
   };
+
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    };
+  }, []);
 
   const handleTitleChange = (e: React.FormEvent<HTMLHeadingElement>) => {
     const t = e.currentTarget.innerText;

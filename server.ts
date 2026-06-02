@@ -2,13 +2,15 @@ import express from 'express';
 import next from 'next';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
+import { createAdapter } from '@socket.io/redis-adapter';
+import { createClient } from 'redis';
 import { parse } from 'url';
 
 const dev = process.env.NODE_ENV !== 'production';
 const app = next({ dev });
 const handle = app.getRequestHandler();
 
-app.prepare().then(() => {
+app.prepare().then(async () => {
   const server = express();
   const httpServer = createServer(server);
   
@@ -18,6 +20,15 @@ app.prepare().then(() => {
       methods: ["GET", "POST"]
     }
   });
+
+  if (process.env.REDIS_URL) {
+    console.log('Connecting to Redis for WebSockets...');
+    const pubClient = createClient({ url: process.env.REDIS_URL });
+    const subClient = pubClient.duplicate();
+    await Promise.all([pubClient.connect(), subClient.connect()]);
+    io.adapter(createAdapter(pubClient, subClient));
+    console.log('Redis connected and adapter initialized.');
+  }
 
   // Simple in-memory KV store for OS state syncing
   const rooms = new Map<string, any>();

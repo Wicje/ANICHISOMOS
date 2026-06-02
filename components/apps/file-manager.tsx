@@ -6,7 +6,8 @@ import { Folder, File as FileIcon, FileText, Image as ImageIcon, Video, Box, Sea
 import { cn } from '@/lib/utils';
 import { get, set } from 'idb-keyval';
 import { format } from 'date-fns';
-import { initAuth, googleSignIn, getAccessToken, logout, db, collection, onSnapshot, setDoc, doc, deleteDoc as firestoreDeleteDoc } from '@/lib/firebase';
+import { initAuth, googleSignIn, getAccessToken, logout, db, collection, onSnapshot, setDoc, doc, deleteDoc as firestoreDeleteDoc, query, where, limit } from '@/lib/firebase';
+import { FS } from '@/lib/fs';
 
 type FileItem = {
   id: string;
@@ -58,6 +59,7 @@ export function FileManager({ window }: { window: OSWindow }) {
   
   const [needsAuth, setNeedsAuth] = useState(false);
   const [driveFiles, setDriveFiles] = useState<FileItem[]>([]);
+  const [localFiles, setLocalFiles] = useState<FileItem[]>([]);
   const [isLoadingDrive, setIsLoadingDrive] = useState(false);
 
   useEffect(() => {
@@ -108,10 +110,28 @@ export function FileManager({ window }: { window: OSWindow }) {
     }
   };
 
+  const fetchLocalFiles = async () => {
+    try {
+      const entries = await FS.readDir('');
+      setLocalFiles(entries.map(e => ({
+        id: e.id,
+        name: e.name,
+        type: 'doc',
+        date: format(new Date(), 'MMM dd'),
+        size: '--'
+      })));
+    } catch (err) {
+      console.error("Failed to read local files:", err);
+    }
+  };
+
   useEffect(() => {
     if (activeTab === 'Google Drive' && !needsAuth) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       fetchDriveFiles();
+    } else if (activeTab === 'Ziklag NAS (Local)') {
+       
+      fetchLocalFiles();
     }
   }, [activeTab, needsAuth]);
 
@@ -129,13 +149,15 @@ export function FileManager({ window }: { window: OSWindow }) {
 
   useEffect(() => {
     if (!currentUser) return;
-    const unsub = onSnapshot(collection(db, 'files'), (snap) => {
+    const q = query(
+      collection(db, 'files'),
+      where('ownerId', '==', currentUser.id),
+      limit(200)
+    );
+    const unsub = onSnapshot(q, (snap) => {
       const dbFiles: FileItem[] = [];
       snap.forEach(d => {
-        const data = d.data();
-        if (data.ownerId === currentUser.id) {
-           dbFiles.push(data as FileItem);
-        }
+        dbFiles.push(d.data() as FileItem);
       });
       if (dbFiles.length === 0) {
         setFiles(initialFiles); // visual placeholder
@@ -179,16 +201,23 @@ export function FileManager({ window }: { window: OSWindow }) {
         };
         
         try {
-          await setDoc(doc(db, 'files', fileId), newFile);
+          if (activeTab === 'Ziklag NAS (Local)') {
+            await FS.write(file.name, event.target?.result as string, file.type);
+            fetchLocalFiles();
+          } else if (activeTab === 'My Cloud Drive') {
+            await setDoc(doc(db, 'files', fileId), newFile);
+          } else {
+            alert('Cannot upload directly to this tab.');
+          }
         } catch (e: any) {
-          alert('Failed to save file to cloud: ' + e.message);
+          alert('Failed to save file: ' + e.message);
         }
       };
       reader.readAsDataURL(file);
     });
   };
 
-  const deleteFile = async (id: string, e: React.MouseEvent, isDrive?: boolean) => {
+  const deleteFile = async (id: string, e: React.MouseEvent, isDrive?: boolean, isLocal?: string) => {
     e.stopPropagation();
     if (isDrive) {
       const confirmed = globalThis.window.confirm('Are you sure you want to delete this file from Google Drive? This action cannot be undone.');
@@ -206,6 +235,10 @@ export function FileManager({ window }: { window: OSWindow }) {
           console.error("Failed to delete from drive", err);
         }
       }
+    } else if (activeTab === 'Ziklag NAS (Local)') {
+      if (!confirm("Are you sure you want to delete this file locally?")) return;
+      await FS.delete(id);
+      fetchLocalFiles();
     } else {
       if (!confirm("Are you sure you want to delete this file from your OS Cloud?")) return;
       try {
@@ -257,12 +290,14 @@ export function FileManager({ window }: { window: OSWindow }) {
 
   const filteredFiles = files.filter(f => f.name.toLowerCase().includes(search.toLowerCase()));
   const filteredDriveFiles = driveFiles.filter(f => f.name.toLowerCase().includes(search.toLowerCase()));
+  const filteredLocalFiles = localFiles.filter(f => f.name.toLowerCase().includes(search.toLowerCase()));
   
   const ziklagFiles: FileItem[] = [
     { id: 'z1', name: 'Ziklag Firmware Recovery.bin', type: 'doc' as const, content: 'HEX DATA OMITTED', projectId: 'ziklag', size: '4.2 GB', date: new Date().toISOString() },
     { id: 'z2', name: 'Client 492_SD_RAW.mp4', type: 'video' as const, size: '12.8 GB', date: new Date().toISOString() },
     { id: 'z3', name: 'Agency Rebranding Assets.fig', type: 'design' as const, url: 'https://www.figma.com/login', size: '142 MB', date: new Date().toISOString() },
     { id: 'z4', name: 'Local LLM Prompt Templates.md', type: 'doc' as const, content: '# Confidential\n\nPrompt templates for Ziklag data parsing.', size: '12 KB', date: new Date().toISOString() },
+    ...filteredLocalFiles
   ].filter(f => f.name.toLowerCase().includes(search.toLowerCase()));
 
   const currentFiles = activeTab === 'Google Drive' ? filteredDriveFiles : (activeTab === 'Ziklag NAS (Local)' ? ziklagFiles : filteredFiles);
@@ -335,13 +370,14 @@ export function FileManager({ window }: { window: OSWindow }) {
                <h2 className="text-xl font-medium tracking-tight overflow-hidden text-ellipsis whitespace-nowrap">{activeTab}</h2>
              </div>
              <div className="flex items-center gap-4">
-               {activeTab === 'Ziklag NAS (Local)' && (
+                {activeTab === 'Ziklag NAS (Local)' && (
                   <div className="flex items-center gap-2 px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold rounded-full hidden sm:flex">
                      <span className="relative flex h-2 w-2">
                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                         <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                      </span>
-                     WebRTC Direct Connected
+                     {/* @ts-ignore */}
+                     {globalThis.window.__TAURI__ ? 'Tauri Native FS Actived' : 'IndexedDB Fallback (Tauri Ready)'}
                   </div>
                )}
                {activeTab === 'Google Drive' && !needsAuth && (

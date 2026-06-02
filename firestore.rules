@@ -62,5 +62,9 @@ service cloud.firestore {
     match /moodboards/{roomId} {
       allow read, write: if isSignedIn();
     }
+
+    match /codes/{roomId} {
+      allow read, write: if isSignedIn();
+    }
   }
 }
