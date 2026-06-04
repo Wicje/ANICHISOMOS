@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic';
 import { useOS, OSRole, OSUser } from '@/lib/os-context';
 import { WindowFrame } from '@/components/window-frame';
 import { CommandPalette } from '@/components/command-palette';
-import { Terminal, Folder, Globe, Sparkles, Image as ImageIcon, Code2, Search, LayoutTemplate, Clock, Save, Cloud, RefreshCw, ShieldCheck, Power, Figma, Framer, HardDrive, Github, BookOpen, Zap, ZapOff, Briefcase, Brain, User, AlertCircle, Play, Plus } from 'lucide-react';
+import { Terminal, Folder, Globe, Sparkles, Image as ImageIcon, Code2, Search, LayoutTemplate, Clock, Save, Cloud, RefreshCw, ShieldCheck, Power, Figma, Framer, HardDrive, Github, BookOpen, Zap, ZapOff, Briefcase, Brain, User, AlertCircle, Play, Plus, Users } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { format } from 'date-fns';
 import { LoginScreen } from '@/components/login-screen';
@@ -19,7 +19,6 @@ const CodeEditor = dynamic(() => import('@/components/apps/code-editor').then(mo
 const ProductivitySuite = dynamic(() => import('@/components/apps/productivity-suite').then(mod => mod.ProductivitySuite), { ssr: false });
 const AIGateway = dynamic(() => import('@/components/apps/ai-gateway').then(mod => mod.AIGateway), { ssr: false });
 const AdminPanel = dynamic(() => import('@/components/apps/admin-panel').then(mod => mod.AdminPanel), { ssr: false });
-const Preferences = dynamic(() => import('@/components/apps/preferences').then(mod => mod.Preferences), { ssr: false });
 
 const APPS = {
   'terminal': { component: TerminalBox, icon: Terminal, title: 'Terminal', roles: ['admin', 'technician'] },
@@ -31,7 +30,6 @@ const APPS = {
   'office': { component: ProductivitySuite, icon: Briefcase, title: 'Office Suite', roles: ['admin', 'filmmaker'] },
   'ai-gateway': { component: AIGateway, icon: Brain, title: 'AI Gateway', roles: ['admin', 'technician'] },
   'admin': { component: AdminPanel, icon: ShieldCheck, title: 'Access Control', roles: ['admin'] },
-  'prefs': { component: Preferences, icon: Settings, title: 'System Preferences', roles: ['admin', 'filmmaker', 'technician'] },
 };
 
 const PROJECTS = {
@@ -96,7 +94,7 @@ import { collection, onSnapshot, addDoc, query, limit } from 'firebase/firestore
 import { db } from '@/lib/firebase';
 
 export function Desktop() {
-  const { currentUser, setCurrentUser, windows, snapshots, performanceMode, setPerformanceMode, activeWorkspace, setActiveWorkspace, openWindow, minimizeWindow, focusWindow, applyWorkspaceLayout, loadProject, saveSnapshot, restoreSnapshot, wipeSession } = useOS();
+  const { currentUser, setCurrentUser, windows, snapshots, performanceMode, setPerformanceMode, workspaceMode, setWorkspaceMode, activeWorkspace, setActiveWorkspace, openWindow, minimizeWindow, focusWindow, applyWorkspaceLayout, loadProject, saveSnapshot, restoreSnapshot, wipeSession } = useOS();
   const [showSnapshots, setShowSnapshots] = useState(false);
   const [showActionCenter, setShowActionCenter] = useState(false);
   const [customApps, setCustomApps] = useState<any[]>([]);
@@ -174,6 +172,29 @@ export function Desktop() {
                   Desktop {ws + 1}
                 </button>
               ))}
+            </div>
+
+            {/* Workspace Context Toggle (Private vs Agency) */}
+            <div className="flex items-center gap-1 ml-4 pl-4 border-l border-white/20 bg-black/20 rounded-md p-0.5 border border-white/10 shadow-inner">
+               <button 
+                 onClick={() => setWorkspaceMode('private')}
+                 className={cn(
+                   "px-3 py-1 rounded text-xs font-semibold tracking-wide transition-all",
+                   workspaceMode === 'private' ? "bg-white text-black shadow-md" : "text-white/50 hover:text-white/90"
+                 )}
+               >
+                 Private
+               </button>
+               <button 
+                 onClick={() => setWorkspaceMode('agency')}
+                 className={cn(
+                   "px-3 py-1 rounded text-xs font-semibold tracking-wide transition-all flex items-center gap-1.5",
+                   workspaceMode === 'agency' ? "bg-blue-500 text-white shadow-md shadow-blue-500/20" : "text-white/50 hover:text-white/90"
+                 )}
+               >
+                 <Users className="w-3.5 h-3.5" />
+                 Agency
+               </button>
             </div>
           </div>
         </div>
@@ -386,15 +407,9 @@ export function Desktop() {
                     <Brain className="w-5 h-5" />
                     <span className="text-xs font-medium">AI Gateway</span>
                  </button>
-                 <button 
-                    onClick={() => {
-                       setShowActionCenter(false);
-                       openWindow('prefs', 'System Preferences');
-                    }}
-                    className="p-3 rounded-xl bg-blue-500 text-white flex flex-col items-start gap-2 hover:bg-blue-400 transition-colors"
-                 >
+                 <button className="p-3 rounded-xl bg-white/10 text-white flex flex-col items-start gap-2 opacity-50 cursor-not-allowed">
                     <Cloud className="w-5 h-5" />
-                    <span className="text-xs font-medium">Network Sync</span>
+                    <span className="text-xs font-medium">Cloud Sync</span>
                  </button>
                  <button className="p-3 rounded-xl bg-white/10 text-white flex flex-col items-start gap-2 opacity-50 cursor-not-allowed">
                     <ShieldCheck className="w-5 h-5" />

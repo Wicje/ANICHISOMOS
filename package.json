@@ -33,6 +33,9 @@
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
     "tailwind-merge": "^3.3.1",
+    "y-indexeddb": "^9.0.12",
+    "y-webrtc": "^10.3.0",
+    "yjs": "^13.6.31",
     "zustand": "^5.0.14"
   },
   "devDependencies": {

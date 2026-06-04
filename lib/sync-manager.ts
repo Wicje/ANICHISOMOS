@@ -1,5 +1,7 @@
 import { FS } from './fs';
 import { db, collection, getDocs, setDoc, doc, deleteDoc } from './firebase';
+import * as Y from 'yjs';
+import { IndexeddbPersistence } from 'y-indexeddb';
 
 // Abstracted Storage interface
 export interface StorageProvider {
@@ -79,7 +81,7 @@ export class SyncManager {
     this.secondary = secondary;
   }
 
-  // Very basic sync outline for phase 1.
+  // Basic document sync
   async push(collectionName: string) {
     const localData = await this.primary.list(collectionName);
     for (const item of localData) {
@@ -99,6 +101,43 @@ export class SyncManager {
   }
 }
 
+// Global CRDT Manager for real-time local-first sync
+export class CRDTManager {
+  private docs: Map<string, Y.Doc> = new Map();
+  private providers: Map<string, IndexeddbPersistence> = new Map();
+
+  getDoc(name: string): Y.Doc {
+    if (this.docs.has(name)) return this.docs.get(name)!;
+
+    const ydoc = new Y.Doc();
+    this.docs.set(name, ydoc);
+
+    // Initialize Local-First IndexedDB persistence
+    if (typeof window !== 'undefined') {
+      const provider = new IndexeddbPersistence(name, ydoc);
+      this.providers.set(name, provider);
+      
+      provider.on('synced', () => {
+        console.log(`[CRDT] ${name} loaded from local IndexedDB.`);
+      });
+    }
+
+    return ydoc;
+  }
+  
+  clearDoc(name: string) {
+    if (this.providers.has(name)) {
+      const provider = this.providers.get(name)!;
+      provider.destroy();
+      this.providers.delete(name);
+    }
+    if (this.docs.has(name)) {
+      this.docs.delete(name);
+    }
+  }
+}
+
 export const localProvider = new LocalStorageProvider();
 export const firebaseProvider = new FirebaseStorageProvider();
 export const globalSyncManager = new SyncManager(localProvider, firebaseProvider);
+export const crdtManager = new CRDTManager();

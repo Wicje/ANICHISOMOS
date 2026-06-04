@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { OSWindow } from '@/lib/os-context';
+import { OSWindow, useOS } from '@/lib/os-context';
 import { motion, useDragControls } from 'motion/react';
 import { MousePointer2, GripHorizontal, Type, Image as ImageIcon, Trash2, Video, Link as LinkIcon, Upload, MessageSquare } from 'lucide-react';
 import { get, set } from 'idb-keyval';
@@ -54,11 +54,8 @@ function getEmbedDetails(url: string) {
 
 const isImageUrl = (url: string) => /\.(jpeg|jpg|gif|png|webp|svg)($|\?)/i.test(url);
 
-import { WorkspaceIndicator } from '@/components/workspace-indicator';
-
 export function Moodboard({ window }: { window: OSWindow }) {
-  const { currentUser } = useOS();
-  const [workspaceMode, setWorkspaceMode] = useState<'private' | 'shared'>('private');
+  const { currentUser, workspaceMode } = useOS();
   const [nodes, setNodes] = useState<BoardNode[]>([]);
   const [comments, setComments] = useState<Comment[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
@@ -71,64 +68,94 @@ export function Moodboard({ window }: { window: OSWindow }) {
   const isSyncingRef = useRef(false);
 
   const projectId = window.data?.projectId || 'global';
-  const roomId = `moodboard-${projectId}`;
-  const storageKey = `anichisom_os_moodboard_v3_${projectId}`;
+  const roomId = `moodboard-${workspaceMode}-${projectId}`;
   
-  // Storage and Subscribe
+  // Realtime Cursors and Local-First CRDT (Yjs) (Phase 2 & 3)
+  const [awarenessInfo, setAwarenessInfo] = useState<any[]>([]);
+  
   useEffect(() => {
-    let isMounted = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setIsLoaded(false);
     colorRef.current = `hsl(${Math.round(Math.random() * 360)}, 100%, 50%)`;
     
-    if (workspaceMode === 'private') {
-      get(storageKey).then((saved) => {
-        if (!isMounted) return;
-        if (saved && saved.nodes) {
-          setNodes(saved.nodes);
-          if (saved.comments) setComments(saved.comments);
-        } else {
-          setNodes([
-            { id: '1', type: 'text', x: 100, y: 100, content: `CAMPAIGN: "${projectId.toUpperCase()}"\n\nPrivate workspace mode (Tip: Paste images or text here)` },
-          ]);
-        }
-        setIsLoaded(true);
-      });
-    } else {
-      if (!currentUser) return;
-      // Subscribe to Firestore for real-time moodboard updates
-      const roomRef = doc(db, 'moodboards', roomId);
-      const unsub = onSnapshot(roomRef, (snap) => {
-        if (!isMounted) return;
-        if (snap.exists()) {
-          const state = snap.data();
-          if (state && state.nodes) {
-             isSyncingRef.current = true;
-             setNodes(state.nodes);
-             if (state.comments) setComments(state.comments);
-          }
-        } else {
-          setNodes([
-             { id: '1', type: 'text', x: 100, y: 100, content: `CAMPAIGN: "${projectId.toUpperCase()}"\n\nShared workspace mode` },
-          ]);
-        }
-        setIsLoaded(true);
-      });
-      return () => { isMounted = false; unsub(); };
-    }
-    return () => { isMounted = false; };
-  }, [roomId, storageKey, workspaceMode, currentUser, projectId]);
+    // Abstracted Storage Layer & Sync Manager imports
+    import('yjs').then(Y => {
+        import('y-indexeddb').then(({ IndexeddbPersistence }) => {
+            const ydoc = new Y.Doc();
+            const yNodes = ydoc.getMap<BoardNode>('nodes');
+            const yComments = ydoc.getArray<Comment>('comments');
+            
+            // Local IndexedDB persistence
+            const provider = new IndexeddbPersistence(roomId, ydoc);
+            
+            // Let's bind UI
+            const syncUiToYjs = () => {
+                setNodes(Array.from(yNodes.values()));
+                setComments(yComments.toArray());
+            };
+            
+            provider.on('synced', () => {
+                if (yNodes.size === 0) {
+                    const initNode: BoardNode = { id: '1', type: 'text', x: 100, y: 100, content: `CAMPAIGN: "${projectId.toUpperCase()}"\n\n${workspaceMode === 'agency' ? 'Agency Shared Mode' : 'Private Mode'}` };
+                    yNodes.set(initNode.id, initNode);
+                }
+                syncUiToYjs();
+                setIsLoaded(true);
+            });
+            
+            yNodes.observe(syncUiToYjs);
+            yComments.observe(syncUiToYjs);
+
+            let webrtcProvider: any = null;
+            if (workspaceMode === 'agency') {
+                import('y-webrtc').then(({ WebrtcProvider }) => {
+                   webrtcProvider = new WebrtcProvider(roomId, ydoc, { signaling: ['wss://signaling.yjs.dev'] });
+                   webrtcProvider.awareness.setLocalStateField('user', {
+                     name: currentUser?.name || 'Anonymous',
+                     color: colorRef.current,
+                     avatar: currentUser?.avatarUrl
+                   });
+                   
+                   webrtcProvider.awareness.on('change', () => {
+                     const states = Array.from(webrtcProvider.awareness.getStates().entries())
+                       .filter((entry: any) => entry[0] !== webrtcProvider.doc.clientID && entry[1].user && entry[1].cursor)
+                       .map((entry: any) => entry[1]);
+                     setAwarenessInfo(states);
+                   });
+                   
+                   // Store on window object to update cursors easily
+                   (window as any)[`webrtc_${window.id}`] = webrtcProvider;
+                });
+            }
+
+            // Sync down to our state setter refs mapping (to mock React's setState behavior)
+            (window as any)[`ydoc_${window.id}`] = yNodes;
+
+            return () => {
+                provider.destroy();
+                if (webrtcProvider) {
+                   webrtcProvider.destroy();
+                }
+                delete (window as any)[`webrtc_${window.id}`];
+                delete (window as any)[`ydoc_${window.id}`];
+            };
+        });
+    });
+  }, [roomId, workspaceMode, currentUser, projectId, window.id]);
 
   // Handle inject data from window param on first load
   useEffect(() => {
      if (isLoaded && window.data?.url) {
-       setNodes(prev => {
-          if (!prev.find(n => n.content === window.data?.url)) {
-             return [...prev, { id: crypto.randomUUID(), type: 'image', x: 200, y: 200, width: 400, content: window.data.url }];
-          }
-          return prev;
-       });
+        const yNodes = (window as any)[`ydoc_${window.id}`];
+        if (yNodes) {
+           const existing = Array.from(yNodes.values()).find((n: any) => n.content === window.data?.url);
+           if (!existing) {
+              const newId = crypto.randomUUID();
+              yNodes.set(newId, { id: newId, type: 'image', x: 200, y: 200, width: 400, content: window.data.url });
+           }
+        }
      }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [window.data?.url, isLoaded]);
+  }, [window.data?.url, isLoaded, window.id]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -164,35 +191,20 @@ export function Moodboard({ window }: { window: OSWindow }) {
     return () => container.removeEventListener('wheel', onWheel);
   }, []);
 
-  // Save to storage
-  useEffect(() => {
-    let timeout: NodeJS.Timeout;
-    if (isLoaded) {
-      if (workspaceMode === 'private') {
-        timeout = setTimeout(() => {
-          set(storageKey, { nodes, comments });
-        }, 500);
-      } else {
-        timeout = setTimeout(() => {
-          if (isSyncingRef.current) {
-            isSyncingRef.current = false;
-            return;
-          }
-          const roomRef = doc(db, 'moodboards', roomId);
-          const stateToSync = { nodes, comments: comments || [], workspaceMode: 'shared' };
-          setDoc(roomRef, stateToSync, { merge: true }).catch(err => {
-             console.error("Firebase sync error", err);
-          });
-        }, 500);
-      }
-    }
-    return () => clearTimeout(timeout);
-  }, [nodes, comments, isLoaded, roomId, storageKey, workspaceMode]);
+  // Update helper for Yjs writes
+  const _updateYNode = (newVals: Partial<BoardNode> & { id: string }) => {
+     const yNodes = (window as any)[`ydoc_${window.id}`];
+     if (yNodes) {
+        const existing = yNodes.get(newVals.id) || {};
+        yNodes.set(newVals.id, { ...existing, ...newVals });
+     }
+  };
 
   const addText = () => {
     const x = (window.width / 2 - camera.x) / camera.z;
     const y = (window.height / 2 - camera.y) / camera.z;
-    setNodes([...nodes, { id: crypto.randomUUID(), type: 'text', x, y, content: 'New Text' }]);
+    const newId = crypto.randomUUID();
+    _updateYNode({ id: newId, type: 'text', x, y, content: 'New Text' });
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -205,7 +217,8 @@ export function Moodboard({ window }: { window: OSWindow }) {
         const x = (window.width / 2 - camera.x) / camera.z;
         const y = (window.height / 2 - camera.y) / camera.z;
         const type = file.type.startsWith('video/') ? 'video' : 'image';
-        setNodes(prev => [...prev, { id: crypto.randomUUID(), type, x, y, content: base64 }]);
+        const newId = crypto.randomUUID();
+        _updateYNode({ id: newId, type, x, y, content: base64 });
     };
     reader.readAsDataURL(file);
     
@@ -229,27 +242,30 @@ export function Moodboard({ window }: { window: OSWindow }) {
     } else if (url.includes('youtube.com/') || url.includes('youtu.be/') || url.includes('instagram.com/') || url.includes('pinterest.com/')) {
         type = 'embed';
     }
-    setNodes(prev => [...prev, { id: crypto.randomUUID(), type, x, y, content: url }]);
+    const newId = crypto.randomUUID();
+    _updateYNode({ id: newId, type, x, y, content: url });
   };
 
   const deleteNode = (id: string) => {
-    setNodes(nodes.filter(n => n.id !== id));
+    const yNodes = (window as any)[`ydoc_${window.id}`];
+    if (yNodes) yNodes.delete(id);
   };
   
   const updateNodePosition = (id: string, x: number, y: number) => {
-    setNodes(nodes.map(n => n.id === id ? { ...n, x, y } : n));
+    _updateYNode({ id, x, y });
   };
   
   const updateNodeContent = (id: string, content: string) => {
-    setNodes(nodes.map(n => n.id === id ? { ...n, content } : n));
+    _updateYNode({ id, content });
+  };
+
+  const updateNodeSize = (id: string, width: number, height: number) => {
+     _updateYNode({ id, width, height });
   };
 
   const handlePaste = (e: React.ClipboardEvent) => {
-    // Check if we are pasting into a textarea, if so let it happen natively
     const activeElement = document.activeElement;
-    if (activeElement && activeElement.tagName === 'TEXTAREA') {
-      return; 
-    }
+    if (activeElement && activeElement.tagName === 'TEXTAREA') return; 
 
     const items = e.clipboardData?.items;
     if (!items) return;
@@ -263,11 +279,11 @@ export function Moodboard({ window }: { window: OSWindow }) {
             const base64 = event.target?.result as string;
             const x = (window.width / 2 - camera.x) / camera.z;
             const y = (window.height / 2 - camera.y) / camera.z;
-            setNodes(prev => [...prev, { id: crypto.randomUUID(), type: 'image', x, y, content: base64 }]);
+            _updateYNode({ id: crypto.randomUUID(), type: 'image', x, y, content: base64 });
           };
           reader.readAsDataURL(file);
         }
-        return; // stop after first image
+        return; 
       }
     }
     
@@ -279,7 +295,7 @@ export function Moodboard({ window }: { window: OSWindow }) {
         } else {
            const x = (window.width / 2 - camera.x) / camera.z;
            const y = (window.height / 2 - camera.y) / camera.z;
-           setNodes(prev => [...prev, { id: crypto.randomUUID(), type: 'text', x, y, content: text }]);
+           _updateYNode({ id: crypto.randomUUID(), type: 'text', x, y, content: text });
         }
     }
   };
@@ -318,6 +334,17 @@ export function Moodboard({ window }: { window: OSWindow }) {
         y: prev.y + e.movementY
       }));
     }
+    
+    // Broadcast WebRTC cursor (Phase 3)
+    const webrtc = (window as any)[`webrtc_${window.id}`];
+    if (webrtc && webrtc.awareness) {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (rect) {
+        const x = (e.clientX - rect.left - camera.x) / camera.z;
+        const y = (e.clientY - rect.top - camera.y) / camera.z;
+        webrtc.awareness.setLocalStateField('cursor', { x, y });
+      }
+    }
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
@@ -353,13 +380,10 @@ export function Moodboard({ window }: { window: OSWindow }) {
 
       {/* Toolbar */}
       <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-white px-4 py-2 rounded-full shadow-lg border border-black/10 z-50 flex items-center gap-2">
-        <WorkspaceIndicator 
-          mode={workspaceMode} 
-          onToggle={() => setWorkspaceMode(prev => prev === 'private' ? 'shared' : 'private')} 
-          roomId={`moodboard-${projectId}`}
-          className="mr-2"
-          variant="light"
-        />
+        <div className="px-2 py-1 flex flex-col justify-center text-[10px] rounded uppercase font-bold tracking-wider leading-tight mr-2 text-black/50">
+          <span>{workspaceMode}</span>
+          <span className="text-[8px] opacity-70">Context</span>
+        </div>
         <div className="w-px h-6 bg-black/10 mx-[-4px]" />
         
         <button onClick={() => setMode('select')} className={cn("w-8 h-8 rounded flex items-center justify-center transition-colors", mode === 'select' ? "bg-black text-white" : "text-black/60 hover:bg-slate-100 hover:text-black")}>
@@ -429,6 +453,28 @@ export function Moodboard({ window }: { window: OSWindow }) {
              />
           </div>
         ))}
+        {awarenessInfo.map((state, i) => {
+          if (!state.cursor || !state.user) return null;
+          return (
+             <div 
+               key={i} 
+               className="absolute pointer-events-none transition-all duration-75"
+               style={{ 
+                 left: state.cursor.x, 
+                 top: state.cursor.y,
+                 transform: 'translate(-50%, -50%)'
+               }}
+             >
+               <MousePointer2 className="w-5 h-5 drop-shadow-md text-transparent" style={{ fill: state.user.color }} stroke="white" strokeWidth={2} />
+               <div 
+                 className="absolute top-5 left-3 px-2 py-0.5 rounded text-[10px] font-bold text-white shadow-md whitespace-nowrap"
+                 style={{ backgroundColor: state.user.color }}
+               >
+                 {state.user.name}
+               </div>
+             </div>
+          );
+        })}
       </div>
     </div>
   );

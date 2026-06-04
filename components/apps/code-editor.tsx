@@ -4,12 +4,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import { OSWindow, useOS } from '@/lib/os-context';
 import { FileCode, Play, Settings, RefreshCcw, Server, Users } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { db, doc, onSnapshot, setDoc } from '@/lib/firebase';
+import { Storage } from '@/lib/storage';
 import Editor from '@monaco-editor/react';
-import { WorkspaceIndicator } from '@/components/workspace-indicator';
 
 export function CodeEditor({ window }: { window: OSWindow }) {
-  const { openWindow, currentUser } = useOS();
+  const { openWindow, currentUser, workspaceMode, setWorkspaceMode } = useOS();
   const projectId = window.data?.projectId || 'default';
   
   const getInitialCode = (id: string, content?: string) => {
@@ -30,39 +29,34 @@ export function CodeEditor({ window }: { window: OSWindow }) {
   const [isDeploying, setIsDeploying] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const isSyncingRef = useRef(false);
-  const [workspaceMode, setWorkspaceMode] = useState<'private' | 'shared'>('private');
 
   const roomId = `code-${projectId}`;
-  const storageKey = `anichisom_os_code_v1_${projectId}`;
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoaded(false);
-    if (workspaceMode === 'private') {
-      import('idb-keyval').then(({ get }) => {
-        get(storageKey).then((saved) => {
-          if (saved && typeof saved === 'string') {
-             setCode(saved);
-          }
-          setLoaded(true);
-        });
-      });
-    } else {
-      if (!currentUser) return;
-      // Subscribe to Firestore for real-time code updates
-      const roomRef = doc(db, 'codes', roomId);
-      const unsub = onSnapshot(roomRef, (snap) => {
-        if (snap.exists()) {
-          const state = snap.data();
-          if (state && state.code !== undefined && state.code !== code) {
+    
+    // Abstracted Storage Load
+    Storage.getDoc('codes', roomId, workspaceMode).then((saved: any) => {
+       if (workspaceMode === 'private' && saved && typeof saved === 'string') {
+          setCode(saved);
+       } else if (saved && saved.code !== undefined) {
+          setCode(saved.code);
+       }
+       setLoaded(true);
+    });
+
+    const unsub = Storage.subscribe('codes', roomId, workspaceMode, (state: any) => {
+       if (state) {
+         const remoteCode = workspaceMode === 'private' ? state : state.code;
+         if (remoteCode !== undefined && remoteCode !== code) {
              isSyncingRef.current = true;
-             setCode(state.code);
-          }
-        }
-        setLoaded(true);
-      });
-      return () => unsub();
-    }
+             setCode(remoteCode);
+         }
+       }
+    });
+
+    return () => unsub();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId, workspaceMode, currentUser]);
 
@@ -79,13 +73,9 @@ export function CodeEditor({ window }: { window: OSWindow }) {
     if (saveCodeRef.current) clearTimeout(saveCodeRef.current);
     saveCodeRef.current = setTimeout(() => {
         if (workspaceMode === 'private') {
-           import('idb-keyval').then(({ set }) => set(storageKey, val));
+           Storage.setDoc('codes', roomId, val, workspaceMode);
         } else {
-           // Sync to cloud
-           const roomRef = doc(db, 'codes', roomId);
-           setDoc(roomRef, { code: val, workspaceMode: 'shared' }, { merge: true }).catch(err => {
-               console.error("Firebase sync error", err);
-           });
+           Storage.setDoc('codes', roomId, { code: val, workspaceMode: 'agency' }, workspaceMode);
         }
     }, 500);
   };
@@ -154,11 +144,14 @@ export function CodeEditor({ window }: { window: OSWindow }) {
           <span>{fileName}</span>
         </div>
         <div className="flex items-center gap-2">
-          <WorkspaceIndicator 
-            mode={workspaceMode} 
-            onToggle={() => setWorkspaceMode(prev => prev === 'private' ? 'shared' : 'private')} 
-            roomId={`code-${projectId}`}
-          />
+          <button 
+            onClick={() => setWorkspaceMode(workspaceMode === 'private' ? 'agency' : 'private')}
+            className={cn("flex flex-col justify-center px-2 py-0.5 rounded transition-colors uppercase font-bold tracking-wider leading-tight text-[9px]", workspaceMode === 'agency' ? "text-neon-blue bg-neon-blue/10" : "text-[#aaaaaa] hover:bg-[#333333]")}
+            title={workspaceMode === 'private' ? "Switch to Team Workspace" : "Switch to Personal Space"}
+          >
+            <span>{workspaceMode}</span>
+            <span className="text-[7px] opacity-70 mt-[-2px]">Context</span>
+          </button>
           
           <div className="w-px h-5 bg-[#3c3c3c] mx-1" />
 

@@ -37,12 +37,16 @@ export type OSUser = {
   avatarUrl?: string; // Add avatar support
 };
 
+export type WorkspaceMode = 'private' | 'agency';
+
 type OSContextType = {
   currentUser: OSUser | null;
   setCurrentUser: (user: OSUser | null) => void;
   windows: OSWindow[];
   snapshots: Snapshot[];
   performanceMode: PerformanceMode;
+  workspaceMode: WorkspaceMode;
+  setWorkspaceMode: (mode: WorkspaceMode) => void;
   activeWorkspace: number;
   setActiveWorkspace: (id: number) => void;
   setPerformanceMode: (mode: PerformanceMode) => void;
@@ -66,10 +70,13 @@ export function OSProvider({ children }: { children: React.ReactNode }) {
   const [windows, setWindows] = useState<OSWindow[]>([]);
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [performanceMode, setPerformanceMode] = useState<PerformanceMode>('heavy');
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('private');
   const [activeWorkspace, setActiveWorkspace] = useState(0);
   const highestZIndexRef = useRef(10);
+  const isHydratedRef = useRef(false);
 
   useEffect(() => {
+    // Load local snapshots
     get('anichisom_os_snapshots').then(data => {
       if (data) setSnapshots(data);
     });
@@ -90,6 +97,26 @@ export function OSProvider({ children }: { children: React.ReactNode }) {
                 };
                 setCurrentUser(osUser);
                 set('anichisom_os_user_cache', osUser);
+                
+                // Cross-Device Resumé (Phase 4): Fetch serialized desktop state
+                if (data.desktopState && data.desktopState.windows && !isHydratedRef.current) {
+                   setWindows(data.desktopState.windows);
+                   if (data.desktopState.workspaceMode) setWorkspaceMode(data.desktopState.workspaceMode);
+                   isHydratedRef.current = true;
+                   
+                   // Restore z-index counter
+                   const highest = Math.max(10, ...data.desktopState.windows.map((w: any) => w.zIndex || 10));
+                   highestZIndexRef.current = highest;
+                } else if (!isHydratedRef.current) {
+                    // Fast path for returning or new user with no remote state, try local
+                    get('anichisom_os_desktop').then(localData => {
+                        if (localData && localData.windows) {
+                            setWindows(localData.windows);
+                            if (localData.workspaceMode) setWorkspaceMode(localData.workspaceMode);
+                        }
+                    });
+                    isHydratedRef.current = true;
+                }
             } else {
                 // Not approved
                 setCurrentUser(null);
@@ -105,66 +132,58 @@ export function OSProvider({ children }: { children: React.ReactNode }) {
           const cachedUser = await get('anichisom_os_user_cache');
           if (cachedUser && cachedUser.id === user.uid) {
              setCurrentUser(cachedUser);
+             if (!isHydratedRef.current) {
+               get('anichisom_os_desktop').then(localData => {
+                 if (localData && localData.windows) {
+                   setWindows(localData.windows);
+                   if (localData.workspaceMode) setWorkspaceMode(localData.workspaceMode);
+                 }
+                 isHydratedRef.current = true;
+               });
+             }
           } else if (user.email?.toLowerCase() === 'anichisom4top@gmail.com') {
              setCurrentUser({
                id: user.uid,
                name: user.email?.split('@')[0] || 'Admin',
                role: 'admin'
              });
+             isHydratedRef.current = true;
           } else {
              setCurrentUser(null);
           }
         }
       } else {
         setCurrentUser(null);
+        setWindows([]); // Clear desktop on signout
         del('anichisom_os_user_cache'); // Clear cached user
       }
     });
     return () => unsubscribe();
   }, []);
 
+  // Global Desktop State Serialization (Phase 4)
   useEffect(() => {
-    // If a user logs in, try to fetch their last session if we have no windows open,
-    // or give them an option. Let's just load their remote session on login if the local session is empty.
-    if (!currentUser) return;
+    if (!currentUser || !isHydratedRef.current) return;
     
-    let isFetching = true;
-    const fetchSession = async () => {
-      const docRef = doc(db, 'users', currentUser.id, 'session', 'desktop');
+    // Throttle save to prevent hammering DB and IndexedDB
+    const t = setTimeout(async () => {
       try {
-        const snap = await getDoc(docRef);
-        if (snap.exists() && isFetching) {
-          const remoteWindows = snap.data().windows;
-          // Only auto-restore if we don't have windows currently, to prevent overwriting an active session without prompt.
-          setWindows(prev => {
-            if (prev.length === 0 && remoteWindows && remoteWindows.length > 0) {
-              const highest = Math.max(10, ...remoteWindows.map((w: any) => w.zIndex));
-              highestZIndexRef.current = highest;
-              return remoteWindows;
-            }
-            return prev;
-          });
-        }
-      } catch (err) {
-        console.error("Failed to load cloud session", err);
+        // Save to IndexedDB (local fast path)
+        await set('anichisom_os_desktop', { windows, workspaceMode });
+        
+        // Sync to profile doc for Cross-Device Resumé (async)
+        // using setDoc with merge: true
+        const { setDoc } = await import('@/lib/firebase');
+        await setDoc(doc(db, 'users', currentUser.id), {
+          desktopState: { windows, workspaceMode, lastUpdated: Date.now() }
+        }, { merge: true });
+      } catch (e) {
+        console.warn('Failed to serialize desktop state', e);
       }
-    };
-    fetchSession();
-    
-    return () => { isFetching = false; };
-  }, [currentUser]);
-
-  // Save session automatically to cloud debounced
-  useEffect(() => {
-    if (!currentUser) return;
-    const timeout = setTimeout(() => {
-      const docRef = doc(db, 'users', currentUser.id, 'session', 'desktop');
-      setDoc(docRef, { windows: JSON.parse(JSON.stringify(windows)), timestamp: Date.now() }, { merge: true }).catch(err => {
-         console.error("Failed to save cloud session", err);
-      });
     }, 2000);
-    return () => clearTimeout(timeout);
-  }, [windows, currentUser]);
+    
+    return () => clearTimeout(t);
+  }, [windows, workspaceMode, currentUser]);
 
   const saveSnapshot = useCallback((name: string) => {
     const newSnapshot: Snapshot = {
@@ -413,8 +432,10 @@ export function OSProvider({ children }: { children: React.ReactNode }) {
     windows,
     snapshots,
     performanceMode,
+    workspaceMode,
     activeWorkspace,
     setActiveWorkspace,
+    setWorkspaceMode,
     setPerformanceMode,
     openWindow,
     closeWindow,
@@ -427,7 +448,7 @@ export function OSProvider({ children }: { children: React.ReactNode }) {
     saveSnapshot,
     restoreSnapshot,
     wipeSession
-  }), [currentUser, windows, snapshots, performanceMode, activeWorkspace, openWindow, closeWindow, focusWindow, minimizeWindow, maximizeWindow, updateWindowDimensions, applyWorkspaceLayout, loadProject, saveSnapshot, restoreSnapshot, wipeSession]);
+  }), [currentUser, windows, snapshots, performanceMode, workspaceMode, activeWorkspace, openWindow, closeWindow, focusWindow, minimizeWindow, maximizeWindow, updateWindowDimensions, applyWorkspaceLayout, loadProject, saveSnapshot, restoreSnapshot, wipeSession]);
 
   return <OSContext.Provider value={value}>{children}</OSContext.Provider>;
 }
@@ -438,4 +459,14 @@ export function useOS() {
     throw new Error('useOS must be used within an OSProvider');
   }
   return context;
+}
+
+export function useAppVisibility(windowId: string) {
+  const { windows } = useOS();
+  const windowNode = windows.find(w => w.id === windowId);
+  const isFocused = windowNode ? windowNode.zIndex >= Math.max(...windows.map(w => w.zIndex)) : false;
+  return {
+    isVisible: windowNode ? !windowNode.isMinimized : false,
+    isFocused
+  };
 }

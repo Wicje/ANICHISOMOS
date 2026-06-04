@@ -6,15 +6,13 @@ import { FileText, Grid, Presentation, FileCode, Printer, Share2, Save, X, Type,
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import DOMPurify from 'isomorphic-dompurify';
-import { db, doc, onSnapshot, setDoc } from '@/lib/firebase';
-import { WorkspaceIndicator } from '@/components/workspace-indicator';
+import { Storage } from '@/lib/storage';
 
 type AppType = 'word' | 'sheets' | 'slides' | 'pdf';
 
 export function ProductivitySuite({ window }: { window: OSWindow }) {
-  const { performanceMode, currentUser } = useOS();
+  const { performanceMode, currentUser, workspaceMode, setWorkspaceMode } = useOS();
   const [activeTab, setActiveTab] = useState<AppType>((window.data?.tab as AppType) || 'word');
-  const [workspaceMode, setWorkspaceMode] = useState<'private' | 'shared'>('private');
   
   const projectId = window.data?.projectId || 'global';
 
@@ -51,14 +49,14 @@ export function ProductivitySuite({ window }: { window: OSWindow }) {
             ))}
           </div>
           
-          <div className="pb-1">
-            <WorkspaceIndicator 
-               mode={workspaceMode} 
-               onToggle={() => setWorkspaceMode(prev => prev === 'private' ? 'shared' : 'private')} 
-               roomId={`productivity-${window.data?.projectId || 'global'}`}
-               variant="light"
-            />
-          </div>
+          <button 
+            onClick={() => setWorkspaceMode(workspaceMode === 'private' ? 'agency' : 'private')}
+            className={cn("px-2 py-1 flex flex-col justify-center text-[9px] rounded-t-lg transition-colors uppercase font-bold tracking-wider leading-tight mb-[-1px] border border-transparent border-b-0", workspaceMode === 'agency' ? 'bg-white text-neon-blue border-slate-200' : 'text-slate-400 hover:text-slate-600')}
+            title={workspaceMode === 'private' ? "Switch to Team Workspace" : "Switch to Personal Space"}
+          >
+            <span>{workspaceMode}</span>
+            <span className="text-[7px] opacity-70">Context</span>
+          </button>
         </div>
         
         {/* Toolbar */}
@@ -143,7 +141,7 @@ export function ProductivitySuite({ window }: { window: OSWindow }) {
   );
 }
 
-function WordEditor({ performanceMode, workspaceMode, projectId, currentUser }: { performanceMode: 'light' | 'heavy', workspaceMode: 'private' | 'shared', projectId: string, currentUser: any }) {
+function WordEditor({ performanceMode, workspaceMode, projectId, currentUser }: { performanceMode: 'light' | 'heavy', workspaceMode: 'private' | 'agency', projectId: string, currentUser: any }) {
   const [content, setContent] = useState<string>("Loading document...");
   const [loaded, setLoaded] = useState(false);
   const isSyncingRef = useRef(false);
@@ -154,32 +152,29 @@ function WordEditor({ performanceMode, workspaceMode, projectId, currentUser }: 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoaded(false);
-    if (workspaceMode === 'private') {
-      import('idb-keyval').then(({ get }) => {
-        get(storageKey).then((saved) => {
-          if (saved && typeof saved === 'string') {
-            setContent(saved);
-          } else {
-            setContent(`<h1>Manifesto for the Edge</h1><p>The future of software is not centralized. It is distributed, local-first, and owned by the user.</p><h2>Self-Hostable Infrastructure</h2><p>Users who prefer data independence can pull the open-source code via Docker.</p>`);
-          }
-          setLoaded(true);
-        });
-      });
-    } else {
-      if (!currentUser) return;
-      const roomRef = doc(db, 'docs', roomId);
-      const unsub = onSnapshot(roomRef, (snap) => {
-        if (snap.exists()) {
-          const state = snap.data();
-          if (state && state.content !== undefined && state.content !== content) {
-             isSyncingRef.current = true;
-             setContent(state.content);
-          }
+
+    Storage.getDoc('docs', roomId, workspaceMode).then((saved: any) => {
+        if (workspaceMode === 'private' && saved && typeof saved === 'string') {
+          setContent(saved);
+        } else if (saved && saved.content !== undefined) {
+          setContent(saved.content);
+        } else if (!saved) {
+          setContent(`<h1>Manifesto for the Edge</h1><p>The future of software is not centralized. It is distributed, local-first, and owned by the user.</p><h2>Self-Hostable Infrastructure</h2><p>Users who prefer data independence can pull the open-source code via Docker.</p>`);
         }
         setLoaded(true);
-      });
-      return () => unsub();
-    }
+    });
+
+    const unsub = Storage.subscribe('docs', roomId, workspaceMode, (state: any) => {
+       if (state) {
+         const remoteData = workspaceMode === 'private' ? state : state.content;
+         if (remoteData !== undefined && remoteData !== content) {
+             isSyncingRef.current = true;
+             setContent(remoteData);
+         }
+       }
+    });
+
+    return () => unsub();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceMode, projectId, currentUser, roomId]);
 
@@ -196,14 +191,9 @@ function WordEditor({ performanceMode, workspaceMode, projectId, currentUser }: 
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = setTimeout(() => {
        if (workspaceMode === 'private') {
-          import('idb-keyval').then(({ set }) => {
-             set(storageKey, newContent);
-          });
+           Storage.setDoc('docs', roomId, newContent, workspaceMode);
        } else {
-          const roomRef = doc(db, 'docs', roomId);
-          setDoc(roomRef, { content: newContent, workspaceMode: 'shared' }, { merge: true }).catch(err => {
-             console.error("Firebase sync error", err);
-          });
+           Storage.setDoc('docs', roomId, { content: newContent, workspaceMode: 'shared' }, workspaceMode);
        }
     }, 500);
   };
@@ -232,39 +222,37 @@ function WordEditor({ performanceMode, workspaceMode, projectId, currentUser }: 
   );
 }
 
-function SheetsEditor({ workspaceMode, projectId, currentUser }: { workspaceMode: 'private' | 'shared', projectId: string, currentUser: any }) {
+function SheetsEditor({ workspaceMode, projectId, currentUser }: { workspaceMode: 'private' | 'agency', projectId: string, currentUser: any }) {
   const [data, setData] = useState<Record<string, string>>({});
   const [loaded, setLoaded] = useState(false);
   const isSyncingRef = useRef(false);
 
   const roomId = `sheets-${projectId}`;
-  const storageKey = `anichisom_os_sheets_${projectId}`;
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoaded(false);
-    if (workspaceMode === 'private') {
-      import('idb-keyval').then(({ get }) => {
-        get(storageKey).then((saved) => {
-          if (saved) setData(saved);
-          setLoaded(true);
-        });
-      });
-    } else {
-      if (!currentUser) return;
-      const roomRef = doc(db, 'docs', roomId);
-      const unsub = onSnapshot(roomRef, (snap) => {
-        if (snap.exists()) {
-          const state = snap.data();
-          if (state && state.data !== undefined) {
-             isSyncingRef.current = true;
-             setData(state.data);
-          }
+
+    Storage.getDoc('docs', roomId, workspaceMode).then((saved: any) => {
+        if (workspaceMode === 'private' && saved) {
+          setData(saved);
+        } else if (saved && saved.data !== undefined) {
+          setData(saved.data);
         }
         setLoaded(true);
-      });
-      return () => unsub();
-    }
+    });
+
+    const unsub = Storage.subscribe('docs', roomId, workspaceMode, (state: any) => {
+       if (state) {
+         const remoteData = workspaceMode === 'private' ? state : state.data;
+         if (remoteData !== undefined) {
+             isSyncingRef.current = true;
+             setData(remoteData);
+         }
+       }
+    });
+
+    return () => unsub();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceMode, projectId, currentUser, roomId]);
 
@@ -281,14 +269,9 @@ function SheetsEditor({ workspaceMode, projectId, currentUser }: { workspaceMode
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = setTimeout(() => {
         if (workspaceMode === 'private') {
-           import('idb-keyval').then(({ set }) => {
-             set(storageKey, newData);
-           });
+           Storage.setDoc('docs', roomId, newData, workspaceMode);
         } else {
-           const roomRef = doc(db, 'docs', roomId);
-           setDoc(roomRef, { data: newData, workspaceMode: 'shared' }, { merge: true }).catch(err => {
-              console.error("Firebase sync error", err);
-           });
+           Storage.setDoc('docs', roomId, { data: newData, workspaceMode: 'agency' }, workspaceMode);
         }
     }, 500);
   };
@@ -342,44 +325,43 @@ function SheetsEditor({ workspaceMode, projectId, currentUser }: { workspaceMode
   );
 }
 
-function SlidesEditor({ workspaceMode, projectId, currentUser }: { workspaceMode: 'private' | 'shared', projectId: string, currentUser: any }) {
+function SlidesEditor({ workspaceMode, projectId, currentUser }: { workspaceMode: 'private' | 'agency', projectId: string, currentUser: any }) {
   const [title, setTitle] = useState("Project \"Edge\"");
   const [subtitle, setSubtitle] = useState("An infrastructure presentation explaining local-first architecture and node scaling.");
   const [loaded, setLoaded] = useState(false);
   const isSyncingRef = useRef(false);
 
   const roomId = `slides-${projectId}`;
-  const storageKey = `anichisom_os_slides_${projectId}`;
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoaded(false);
-    if (workspaceMode === 'private') {
-      import('idb-keyval').then(({ get }) => {
-        get(storageKey).then((saved) => {
-          if (saved) {
-            setTitle(saved.title || "");
-            setSubtitle(saved.subtitle || "");
-          }
-          setLoaded(true);
-        });
-      });
-    } else {
-      if (!currentUser) return;
-      const roomRef = doc(db, 'docs', roomId);
-      const unsub = onSnapshot(roomRef, (snap) => {
-        if (snap.exists()) {
-          const state = snap.data();
-          if (state && (state.title !== undefined || state.subtitle !== undefined)) {
-             isSyncingRef.current = true;
+
+    Storage.getDoc('docs', roomId, workspaceMode).then((saved: any) => {
+        if (workspaceMode === 'private' && saved) {
+          setTitle(saved.title || "");
+          setSubtitle(saved.subtitle || "");
+        } else if (saved && (saved.title !== undefined || saved.subtitle !== undefined)) {
+          if (saved.title !== undefined) setTitle(saved.title);
+          if (saved.subtitle !== undefined) setSubtitle(saved.subtitle);
+        }
+        setLoaded(true);
+    });
+
+    const unsub = Storage.subscribe('docs', roomId, workspaceMode, (state: any) => {
+       if (state) {
+          isSyncingRef.current = true;
+          if (workspaceMode === 'private') {
+             if (state.title !== undefined) setTitle(state.title);
+             if (state.subtitle !== undefined) setSubtitle(state.subtitle);
+          } else {
              if (state.title !== undefined) setTitle(state.title);
              if (state.subtitle !== undefined) setSubtitle(state.subtitle);
           }
-        }
-        setLoaded(true);
-      });
-      return () => unsub();
-    }
+       }
+    });
+
+    return () => unsub();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceMode, projectId, currentUser, roomId]);
 
@@ -394,14 +376,9 @@ function SlidesEditor({ workspaceMode, projectId, currentUser }: { workspaceMode
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = setTimeout(() => {
         if (workspaceMode === 'private') {
-           import('idb-keyval').then(({ set }) => {
-             set(storageKey, { title: t, subtitle: s });
-           });
+           Storage.setDoc('docs', roomId, { title: t, subtitle: s }, workspaceMode);
         } else {
-           const roomRef = doc(db, 'docs', roomId);
-           setDoc(roomRef, { title: t, subtitle: s, workspaceMode: 'shared' }, { merge: true }).catch(err => {
-              console.error("Firebase sync error", err);
-           });
+           Storage.setDoc('docs', roomId, { title: t, subtitle: s, workspaceMode: 'agency' }, workspaceMode);
         }
     }, 500);
   };

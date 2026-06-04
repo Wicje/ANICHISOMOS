@@ -75,74 +75,91 @@ import { collection, onSnapshot, setDoc, doc, deleteDoc, query, where, limit } f
 import { db } from '@/lib/firebase';
 import { useOS } from '@/lib/os-context';
 
-import { WorkspaceIndicator } from '@/components/workspace-indicator';
-
 export function CampaignLab({ window }: { window: OSWindow }) {
-  const { currentUser } = useOS();
-  const [workspaceMode, setWorkspaceMode] = useState<'private' | 'shared'>('private');
+  const { currentUser, workspaceMode } = useOS();
   const [pages, setPages] = useState<Page[]>([]);
   const [activePageId, setActivePageId] = useState<string | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [awarenessInfo, setAwarenessInfo] = useState<any[]>([]);
+  
+  const projectId = window.data?.projectId || 'global';
+  const roomId = `campaign-${workspaceMode}-${projectId}`;
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsLoaded(false);
-    if (workspaceMode === 'private') {
-      get('anichisom_os_campaign_lab_v2').then((saved) => {
-        if (saved && saved.length > 0) {
-          setPages(saved);
-          if (!activePageId) setActivePageId(saved[0].id);
-        } else {
-          setPages(DEFAULT_PAGES);
-          if (!activePageId) setActivePageId(DEFAULT_PAGES[0].id);
-        }
-        setIsLoaded(true);
-      });
-    } else {
-      if (!currentUser) return;
-      const q = query(collection(db, 'campaign_pages'), where('workspaceMode', '==', 'shared'));
-      const unsub = onSnapshot(q, (snap) => {
-        const loaded: Page[] = [];
-        snap.forEach(d => {
-           const data = d.data();
-           loaded.push(data as Page);
-        });
-        if (loaded.length === 0) {
-           setPages(DEFAULT_PAGES.map(p => ({...p, id: `shared-${p.id}`})));
-        } else {
-           // Basic parent/child integrity check could go here
-           setPages(loaded);
-           if (!activePageId && loaded.length > 0) setActivePageId(loaded[0].id);
-        }
-        setIsLoaded(true);
-      });
-      return () => unsub();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceMode, currentUser]);
+    
+    import('yjs').then(Y => {
+        import('y-indexeddb').then(({ IndexeddbPersistence }) => {
+            const ydoc = new Y.Doc();
+            const yPages = ydoc.getMap<Page>('pages');
+            
+            const provider = new IndexeddbPersistence(roomId, ydoc);
+            
+            const syncUiToYjs = () => {
+                const arr = Array.from(yPages.values());
+                // sort by arbitrary or updatedAt
+                arr.sort((a, b) => a.updatedAt - b.updatedAt);
+                setPages(arr);
+            };
+            
+            provider.on('synced', () => {
+                if (yPages.size === 0) {
+                    DEFAULT_PAGES.forEach(p => yPages.set(p.id, p));
+                }
+                syncUiToYjs();
+                setIsLoaded(true);
+            });
+            
+            yPages.observe(syncUiToYjs);
 
-  useEffect(() => {
-    let timeout: NodeJS.Timeout;
-    if (isLoaded) {
-      if (workspaceMode === 'private') {
-         timeout = setTimeout(() => {
-           set('anichisom_os_campaign_lab_v2', pages);
-         }, 500);
-      } else {
-         timeout = setTimeout(() => {
-           // Firestore handles batches/offline queues naturally.
-           // In a full implementation, we sync individual docs incrementally.
-           // For simple structure, we'll sync the active page or let UI mutations push directly.
-           // Alternatively, since pages is all pages, we iterate and setDoc
-           pages.forEach(p => {
-             setDoc(doc(db, 'campaign_pages', p.id), { ...p, workspaceMode: 'shared' }, { merge: true });
-           });
-         }, 1000);
-      }
-    }
-    return () => clearTimeout(timeout);
-  }, [pages, isLoaded, workspaceMode]);
+            let webrtcProvider: any = null;
+            if (workspaceMode === 'agency') {
+                import('y-webrtc').then(({ WebrtcProvider }) => {
+                   webrtcProvider = new WebrtcProvider(roomId, ydoc, { signaling: ['wss://signaling.yjs.dev'] });
+                   webrtcProvider.awareness.setLocalStateField('user', {
+                     name: currentUser?.name || 'Anonymous',
+                     color: `hsl(${Math.round(Math.random() * 360)}, 100%, 50%)`,
+                     avatar: currentUser?.avatarUrl
+                   });
+                   
+                   webrtcProvider.awareness.on('change', () => {
+                     const states = Array.from(webrtcProvider.awareness.getStates().entries())
+                       .filter((entry: any) => entry[0] !== webrtcProvider.doc.clientID && entry[1].user && entry[1].cursor)
+                       .map((entry: any) => entry[1]);
+                     setAwarenessInfo(states);
+                   });
+                   
+                   (window as any)[`wrtc_${window.id}`] = webrtcProvider;
+                });
+            }
+
+            (window as any)[`ypages_${window.id}`] = yPages;
+
+            return () => {
+                provider.destroy();
+                if (webrtcProvider) webrtcProvider.destroy();
+                delete (window as any)[`wrtc_${window.id}`];
+                delete (window as any)[`ypages_${window.id}`];
+            };
+        });
+    });
+  }, [roomId, workspaceMode, currentUser, window.id]);
+
+  // Update helper for Yjs writes
+  const _updateYPage = (newVals: Partial<Page> & { id: string }) => {
+     const yPages = (window as any)[`ypages_${window.id}`];
+     if (yPages) {
+        const existing = yPages.get(newVals.id) || {};
+        yPages.set(newVals.id, { ...existing, ...newVals, updatedAt: Date.now() });
+     }
+  };
+  
+  const _deleteYPage = (id: string) => {
+      const yPages = (window as any)[`ypages_${window.id}`];
+      if (yPages) yPages.delete(id);
+  };
 
   const activePage = pages.find((p) => p.id === activePageId);
 
@@ -158,22 +175,19 @@ export function CampaignLab({ window }: { window: OSWindow }) {
       expanded: true,
     };
     
-    // expand parent if needed
-    setPages((prev) => {
-      const next = [...prev, newPage];
-      if (parentId) {
-        const pIndex = next.findIndex(p => p.id === parentId);
-        if (pIndex > -1) next[pIndex].expanded = true;
+    _updateYPage(newPage);
+    if (parentId) {
+      const parent = pages.find(p => p.id === parentId);
+      if (parent && !parent.expanded) {
+         _updateYPage({ id: parentId, expanded: true });
       }
-      return next;
-    });
+    }
     setActivePageId(newPage.id);
   };
 
   const deletePage = (id: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     
-    // Recursive delete helper
     const getIdsToDelete = (pageId: string, pageList: Page[]): string[] => {
       let ids = [pageId];
       const children = pageList.filter(p => p.parentId === pageId);
@@ -183,30 +197,34 @@ export function CampaignLab({ window }: { window: OSWindow }) {
       return ids;
     };
 
-    setPages((prev) => {
-      const idsToDelete = getIdsToDelete(id, prev);
-      const next = prev.filter(p => !idsToDelete.includes(p.id));
-      if (activePageId && idsToDelete.includes(activePageId)) {
-        setTimeout(() => setActivePageId(next.length > 0 ? next[0].id : null), 0);
-      }
-      
-      if (workspaceMode === 'shared') {
-         idsToDelete.forEach(delId => {
-             deleteDoc(doc(db, 'campaign_pages', delId)).catch(err => console.error(err));
-         });
-      }
-      return next;
-    });
+    const idsToDelete = getIdsToDelete(id, pages);
+    idsToDelete.forEach(delId => _deleteYPage(delId));
+    
+    if (activePageId && idsToDelete.includes(activePageId)) {
+       const remaining = pages.filter(p => !idsToDelete.includes(p.id));
+       setTimeout(() => setActivePageId(remaining.length > 0 ? remaining[0].id : null), 0);
+    }
   };
 
   const updatePage = (id: string, updates: Partial<Page>) => {
-    setPages((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, ...updates, updatedAt: Date.now() } : p))
-    );
+    _updateYPage({ id, ...updates });
   };
 
   const updateBlocks = (pageId: string, newBlocks: Block[]) => {
-    updatePage(pageId, { blocks: newBlocks });
+    _updateYPage({ id: pageId, blocks: newBlocks });
+  };
+
+  const handlePointerMove = (e: React.PointerEvent) => {
+    const webrtc = (window as any)[`wrtc_${window.id}`];
+    if (webrtc && webrtc.awareness) {
+      const container = document.getElementById(`campaign-scroll-container-${window.id}`);
+      if (container) {
+        const rect = container.getBoundingClientRect();
+        const x = e.clientX - rect.left + container.scrollLeft;
+        const y = e.clientY - rect.top + container.scrollTop;
+        webrtc.awareness.setLocalStateField('cursor', { x, y });
+      }
+    }
   };
 
   if (!isLoaded) return null;
@@ -229,14 +247,8 @@ export function CampaignLab({ window }: { window: OSWindow }) {
           <div className="flex-1 overflow-y-auto py-2">
             <div className="px-3 pb-2 flex items-center justify-between">
               <span className="text-xs font-semibold text-[#37352f]/50 uppercase tracking-wider">
-                Workspace
+                {workspaceMode === 'private' ? 'Personal Space' : 'Team Workspace'}
               </span>
-              <WorkspaceIndicator 
-                mode={workspaceMode} 
-                onToggle={() => setWorkspaceMode(prev => prev === 'private' ? 'shared' : 'private')} 
-                roomId={`campaign-lab-${window.data?.projectId || 'global'}`}
-                variant="notion" 
-              />
             </div>
             {pages.length === 0 && (
               <div className="px-5 py-4 text-xs text-[#37352f]/40 italic">
@@ -264,8 +276,36 @@ export function CampaignLab({ window }: { window: OSWindow }) {
       )}
 
       {/* Main Content */}
-      <div className="flex-1 h-full overflow-y-auto flex flex-col relative" id="campaign-scroll-container">
-        <div className="sticky top-0 z-50 w-full flex items-center justify-between p-3 bg-white/80 backdrop-blur-md">
+      <div 
+        className="flex-1 h-full overflow-y-auto flex flex-col relative" 
+        id={`campaign-scroll-container-${window.id}`}
+        onPointerMove={handlePointerMove}
+      >
+        {awarenessInfo.map((state, i) => {
+          if (!state.cursor || !state.user) return null;
+          return (
+             <div 
+               key={i} 
+               className="absolute pointer-events-none transition-all duration-75 z-50 pointer-events-none"
+               style={{ 
+                 left: state.cursor.x, 
+                 top: state.cursor.y,
+                 transform: 'translate(-50%, -50%)'
+               }}
+             >
+               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" className="drop-shadow-md">
+                  <path d="M5.5 3.21V20.8c0 .45.54.67.85.35l4.86-5.01c.2-.21.49-.32.78-.32h6.79c.45 0 .67-.54.35-.85L6.35 2.85c-.31-.31-.85-.09-.85.36z" fill={state.user.color} stroke="white" strokeWidth="2"/>
+               </svg>
+               <div 
+                 className="absolute top-5 left-3 px-2 py-0.5 rounded text-[10px] font-bold text-white shadow-md whitespace-nowrap"
+                 style={{ backgroundColor: state.user.color }}
+               >
+                 {state.user.name}
+               </div>
+             </div>
+          );
+        })}
+        <div className="sticky top-0 z-40 w-full flex items-center justify-between p-3 bg-white/80 backdrop-blur-md">
           <div className="flex items-center gap-2 text-sm font-medium text-[#37352f]/70">
             {!sidebarOpen && (
               <button onClick={() => setSidebarOpen(true)} className="p-1 hover:bg-black/5 rounded">

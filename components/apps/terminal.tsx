@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { OSWindow, useOS } from '@/lib/os-context';
+import { OSWindow, useOS, useAppVisibility } from '@/lib/os-context';
 import { motion, AnimatePresence } from 'motion/react';
 import { Terminal as TerminalIcon, Search as SearchIcon, Image as ImageIcon, Folder, ExternalLink, Command, Cpu, Users } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -51,6 +51,15 @@ export function TerminalBox({ window }: { window: OSWindow }) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isSyncingRef = useRef(false);
   const { currentUser } = useOS();
+  const { isVisible, isFocused } = useAppVisibility(window.id);
+
+  useEffect(() => {
+    // If not visible, we could throttle UI updates or pause heavy animation loops.
+    // For now we just log to indicate process management abstraction works.
+    if (!isVisible) {
+      console.log(`[ProcessManager] Suspending heavy operations for Terminal (${window.id})`);
+    }
+  }, [isVisible, window.id]);
 
   useEffect(() => {
     if (!currentUser) return;
