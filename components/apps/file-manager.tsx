@@ -174,46 +174,53 @@ export function FileManager({ window }: { window: OSWindow }) {
     if (!uploadedFiles) return;
 
     Array.from(uploadedFiles).forEach(file => {
-      // Security: Prevent extremely large files from crashing the browser's memory
-      // Limit file uploads to 10MB
-      if (file.size > 10 * 1024 * 1024) {
-        alert(`File ${file.name} is too large. For performance stability, limit it to 10MB.`);
+      // Security/Performance: Firebase has a 1MB limit for doc sizes. 
+      // Ziklag NAS (Local) supports Blobs up to 2GB via IndexedDB/OPFS.
+      if (activeTab === 'My Cloud Drive' && file.size > 1000000) {
+        alert(`File ${file.name} is too large for Cloud Drive (1MB limit). Save to Ziklag NAS for large files.`);
+        return;
+      }
+      if (file.size > 500 * 1024 * 1024) {
+        alert(`File ${file.name} is too large. For browser stability, we limit local uploads to 500MB.`);
         return;
       }
       
-      const reader = new FileReader();
-      reader.onload = async (event) => {
-        let type: FileItem['type'] = 'unknown';
-        if (file.type.startsWith('image/')) type = 'image';
-        else if (file.type.startsWith('video/')) type = 'video';
-        else if (file.type.startsWith('text/') || file.name.endsWith('.md')) type = 'doc';
-        else if (file.name.endsWith('.fig') || file.name.endsWith('.sketch')) type = 'design';
+      let type: FileItem['type'] = 'unknown';
+      if (file.type.startsWith('image/')) type = 'image';
+      else if (file.type.startsWith('video/')) type = 'video';
+      else if (file.type.startsWith('text/') || file.name.endsWith('.md')) type = 'doc';
+      else if (file.name.endsWith('.fig') || file.name.endsWith('.sketch')) type = 'design';
 
-        const fileId = crypto.randomUUID();
-        const newFile = {
-          id: fileId,
-          name: file.name,
-          type,
-          date: format(new Date(), 'MMM dd'),
-          size: (file.size / 1024).toFixed(1) + ' KB',
-          content: event.target?.result as string,
-          ownerId: currentUser?.id
-        };
-        
-        try {
-          if (activeTab === 'Ziklag NAS (Local)') {
-            await FS.write(file.name, event.target?.result as string, file.type);
-            fetchLocalFiles();
-          } else if (activeTab === 'My Cloud Drive') {
-            await setDoc(doc(db, 'files', fileId), newFile);
-          } else {
-            alert('Cannot upload directly to this tab.');
-          }
-        } catch (e: any) {
-          alert('Failed to save file: ' + e.message);
-        }
+      const fileId = crypto.randomUUID();
+      const newFile = {
+        id: fileId,
+        name: file.name,
+        type,
+        date: format(new Date(), 'MMM dd'),
+        size: (file.size / (1024 * 1024)).toFixed(2) + ' MB',
+        ownerId: currentUser?.id
       };
-      reader.readAsDataURL(file);
+      
+      if (activeTab === 'Ziklag NAS (Local)') {
+        // Store as RAW BLOB in IndexedDB to support big files without Base64 overhead
+        import('idb-keyval').then(({ set }) => {
+          set(`file_blob_${fileId}`, file).then(() => {
+             FS.write(file.name, `blob://${fileId}`, file.type).then(() => fetchLocalFiles());
+          });
+        });
+      } else if (activeTab === 'My Cloud Drive') {
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+          try {
+            await setDoc(doc(db, 'files', fileId), { ...newFile, content: event.target?.result as string });
+          } catch (e: any) {
+            alert('Failed to save file: ' + e.message);
+          }
+        };
+        reader.readAsDataURL(file);
+      } else {
+        alert('Cannot upload directly to this tab.');
+      }
     });
   };
 

@@ -19,6 +19,8 @@ const CodeEditor = dynamic(() => import('@/components/apps/code-editor').then(mo
 const ProductivitySuite = dynamic(() => import('@/components/apps/productivity-suite').then(mod => mod.ProductivitySuite), { ssr: false });
 const AIGateway = dynamic(() => import('@/components/apps/ai-gateway').then(mod => mod.AIGateway), { ssr: false });
 const AdminPanel = dynamic(() => import('@/components/apps/admin-panel').then(mod => mod.AdminPanel), { ssr: false });
+const ZiklagTools = dynamic(() => import('@/components/apps/ziklag-tools').then(mod => mod.ZiklagTools), { ssr: false });
+
 
 const APPS = {
   'terminal': { component: TerminalBox, icon: Terminal, title: 'Terminal', roles: ['admin', 'technician'] },
@@ -30,6 +32,7 @@ const APPS = {
   'office': { component: ProductivitySuite, icon: Briefcase, title: 'Office Suite', roles: ['admin', 'filmmaker'] },
   'ai-gateway': { component: AIGateway, icon: Brain, title: 'AI Gateway', roles: ['admin', 'technician'] },
   'admin': { component: AdminPanel, icon: ShieldCheck, title: 'Access Control', roles: ['admin'] },
+  'ziklag': { component: ZiklagTools, icon: Server, title: 'Ziklag Diagnostics', roles: ['admin', 'technician'] },
 };
 
 const PROJECTS = {
