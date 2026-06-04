@@ -6,6 +6,7 @@ import { FileCode, Play, Settings, RefreshCcw, Server, Users } from 'lucide-reac
 import { cn } from '@/lib/utils';
 import { db, doc, onSnapshot, setDoc } from '@/lib/firebase';
 import Editor from '@monaco-editor/react';
+import { WorkspaceIndicator } from '@/components/workspace-indicator';
 
 export function CodeEditor({ window }: { window: OSWindow }) {
   const { openWindow, currentUser } = useOS();
@@ -29,26 +30,41 @@ export function CodeEditor({ window }: { window: OSWindow }) {
   const [isDeploying, setIsDeploying] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const isSyncingRef = useRef(false);
+  const [workspaceMode, setWorkspaceMode] = useState<'private' | 'shared'>('private');
 
   const roomId = `code-${projectId}`;
+  const storageKey = `anichisom_os_code_v1_${projectId}`;
 
   useEffect(() => {
-    // Subscribe to Firestore for real-time code updates
-    const roomRef = doc(db, 'codes', roomId);
-    const unsub = onSnapshot(roomRef, (snap) => {
-      if (snap.exists()) {
-        const state = snap.data();
-        if (state && state.code !== undefined && state.code !== code) {
-           isSyncingRef.current = true;
-           setCode(state.code);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLoaded(false);
+    if (workspaceMode === 'private') {
+      import('idb-keyval').then(({ get }) => {
+        get(storageKey).then((saved) => {
+          if (saved && typeof saved === 'string') {
+             setCode(saved);
+          }
+          setLoaded(true);
+        });
+      });
+    } else {
+      if (!currentUser) return;
+      // Subscribe to Firestore for real-time code updates
+      const roomRef = doc(db, 'codes', roomId);
+      const unsub = onSnapshot(roomRef, (snap) => {
+        if (snap.exists()) {
+          const state = snap.data();
+          if (state && state.code !== undefined && state.code !== code) {
+             isSyncingRef.current = true;
+             setCode(state.code);
+          }
         }
-      }
-      setLoaded(true);
-    });
-
-    return () => unsub();
+        setLoaded(true);
+      });
+      return () => unsub();
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId]);
+  }, [roomId, workspaceMode, currentUser]);
 
   const saveCodeRef = useRef<NodeJS.Timeout | null>(null);
   const handleCodeChange = (newCode: string | undefined) => {
@@ -62,11 +78,15 @@ export function CodeEditor({ window }: { window: OSWindow }) {
     
     if (saveCodeRef.current) clearTimeout(saveCodeRef.current);
     saveCodeRef.current = setTimeout(() => {
-        // Sync to cloud
-        const roomRef = doc(db, 'codes', roomId);
-        setDoc(roomRef, { code: val }, { merge: true }).catch(err => {
-            console.error("Firebase sync error", err);
-        });
+        if (workspaceMode === 'private') {
+           import('idb-keyval').then(({ set }) => set(storageKey, val));
+        } else {
+           // Sync to cloud
+           const roomRef = doc(db, 'codes', roomId);
+           setDoc(roomRef, { code: val, workspaceMode: 'shared' }, { merge: true }).catch(err => {
+               console.error("Firebase sync error", err);
+           });
+        }
     }, 500);
   };
   
@@ -134,6 +154,14 @@ export function CodeEditor({ window }: { window: OSWindow }) {
           <span>{fileName}</span>
         </div>
         <div className="flex items-center gap-2">
+          <WorkspaceIndicator 
+            mode={workspaceMode} 
+            onToggle={() => setWorkspaceMode(prev => prev === 'private' ? 'shared' : 'private')} 
+            roomId={`code-${projectId}`}
+          />
+          
+          <div className="w-px h-5 bg-[#3c3c3c] mx-1" />
+
           <button className="flex items-center gap-1 px-2 py-1 bg-blue-600/80 hover:bg-blue-500 rounded text-white text-xs font-sans transition-colors" title="Deploy to Localhost Virtualizer" onClick={handleDeploy} disabled={isDeploying}>
             {isDeploying ? <RefreshCcw className="w-3 h-3 animate-spin" /> : <Server className="w-3 h-3" />}
             <span>{isDeploying ? 'Deploying...' : 'Live Preview & Sandbox'}</span>

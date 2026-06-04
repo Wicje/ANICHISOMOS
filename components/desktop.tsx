@@ -19,6 +19,7 @@ const CodeEditor = dynamic(() => import('@/components/apps/code-editor').then(mo
 const ProductivitySuite = dynamic(() => import('@/components/apps/productivity-suite').then(mod => mod.ProductivitySuite), { ssr: false });
 const AIGateway = dynamic(() => import('@/components/apps/ai-gateway').then(mod => mod.AIGateway), { ssr: false });
 const AdminPanel = dynamic(() => import('@/components/apps/admin-panel').then(mod => mod.AdminPanel), { ssr: false });
+const Preferences = dynamic(() => import('@/components/apps/preferences').then(mod => mod.Preferences), { ssr: false });
 
 const APPS = {
   'terminal': { component: TerminalBox, icon: Terminal, title: 'Terminal', roles: ['admin', 'technician'] },
@@ -30,6 +31,7 @@ const APPS = {
   'office': { component: ProductivitySuite, icon: Briefcase, title: 'Office Suite', roles: ['admin', 'filmmaker'] },
   'ai-gateway': { component: AIGateway, icon: Brain, title: 'AI Gateway', roles: ['admin', 'technician'] },
   'admin': { component: AdminPanel, icon: ShieldCheck, title: 'Access Control', roles: ['admin'] },
+  'prefs': { component: Preferences, icon: Settings, title: 'System Preferences', roles: ['admin', 'filmmaker', 'technician'] },
 };
 
 const PROJECTS = {
@@ -384,9 +386,15 @@ export function Desktop() {
                     <Brain className="w-5 h-5" />
                     <span className="text-xs font-medium">AI Gateway</span>
                  </button>
-                 <button className="p-3 rounded-xl bg-white/10 text-white flex flex-col items-start gap-2 opacity-50 cursor-not-allowed">
+                 <button 
+                    onClick={() => {
+                       setShowActionCenter(false);
+                       openWindow('prefs', 'System Preferences');
+                    }}
+                    className="p-3 rounded-xl bg-blue-500 text-white flex flex-col items-start gap-2 hover:bg-blue-400 transition-colors"
+                 >
                     <Cloud className="w-5 h-5" />
-                    <span className="text-xs font-medium">Cloud Sync</span>
+                    <span className="text-xs font-medium">Network Sync</span>
                  </button>
                  <button className="p-3 rounded-xl bg-white/10 text-white flex flex-col items-start gap-2 opacity-50 cursor-not-allowed">
                     <ShieldCheck className="w-5 h-5" />

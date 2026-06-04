@@ -54,7 +54,11 @@ function getEmbedDetails(url: string) {
 
 const isImageUrl = (url: string) => /\.(jpeg|jpg|gif|png|webp|svg)($|\?)/i.test(url);
 
+import { WorkspaceIndicator } from '@/components/workspace-indicator';
+
 export function Moodboard({ window }: { window: OSWindow }) {
+  const { currentUser } = useOS();
+  const [workspaceMode, setWorkspaceMode] = useState<'private' | 'shared'>('private');
   const [nodes, setNodes] = useState<BoardNode[]>([]);
   const [comments, setComments] = useState<Comment[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
@@ -70,24 +74,61 @@ export function Moodboard({ window }: { window: OSWindow }) {
   const roomId = `moodboard-${projectId}`;
   const storageKey = `anichisom_os_moodboard_v3_${projectId}`;
   
+  // Storage and Subscribe
   useEffect(() => {
+    let isMounted = true;
     colorRef.current = `hsl(${Math.round(Math.random() * 360)}, 100%, 50%)`;
     
-    // Subscribe to Firestore for real-time moodboard updates
-    const roomRef = doc(db, 'moodboards', roomId);
-    const unsub = onSnapshot(roomRef, (snap) => {
-      if (snap.exists()) {
-        const state = snap.data();
-        if (state && state.nodes) {
-           isSyncingRef.current = true;
-           setNodes(state.nodes);
-           if (state.comments) setComments(state.comments);
+    if (workspaceMode === 'private') {
+      get(storageKey).then((saved) => {
+        if (!isMounted) return;
+        if (saved && saved.nodes) {
+          setNodes(saved.nodes);
+          if (saved.comments) setComments(saved.comments);
+        } else {
+          setNodes([
+            { id: '1', type: 'text', x: 100, y: 100, content: `CAMPAIGN: "${projectId.toUpperCase()}"\n\nPrivate workspace mode (Tip: Paste images or text here)` },
+          ]);
         }
-      }
-    });
+        setIsLoaded(true);
+      });
+    } else {
+      if (!currentUser) return;
+      // Subscribe to Firestore for real-time moodboard updates
+      const roomRef = doc(db, 'moodboards', roomId);
+      const unsub = onSnapshot(roomRef, (snap) => {
+        if (!isMounted) return;
+        if (snap.exists()) {
+          const state = snap.data();
+          if (state && state.nodes) {
+             isSyncingRef.current = true;
+             setNodes(state.nodes);
+             if (state.comments) setComments(state.comments);
+          }
+        } else {
+          setNodes([
+             { id: '1', type: 'text', x: 100, y: 100, content: `CAMPAIGN: "${projectId.toUpperCase()}"\n\nShared workspace mode` },
+          ]);
+        }
+        setIsLoaded(true);
+      });
+      return () => { isMounted = false; unsub(); };
+    }
+    return () => { isMounted = false; };
+  }, [roomId, storageKey, workspaceMode, currentUser, projectId]);
 
-    return () => unsub();
-  }, [roomId]);
+  // Handle inject data from window param on first load
+  useEffect(() => {
+     if (isLoaded && window.data?.url) {
+       setNodes(prev => {
+          if (!prev.find(n => n.content === window.data?.url)) {
+             return [...prev, { id: crypto.randomUUID(), type: 'image', x: 200, y: 200, width: 400, content: window.data.url }];
+          }
+          return prev;
+       });
+     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [window.data?.url, isLoaded]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -123,54 +164,30 @@ export function Moodboard({ window }: { window: OSWindow }) {
     return () => container.removeEventListener('wheel', onWheel);
   }, []);
 
-  // Load from local storage
-  useEffect(() => {
-    get(storageKey).then((saved) => {
-      if (saved && saved.nodes) {
-        setNodes(saved.nodes);
-        if (saved.comments) setComments(saved.comments);
-        
-        // Add new image if passed via window data
-        if (window.data?.url) {
-           setNodes(prev => [...prev, { id: crypto.randomUUID(), type: 'image', x: 200, y: 200, width: 400, content: window.data.url }]);
-        }
-      } else {
-        if (window.data?.url) {
-           setNodes([{ id: '1', type: 'image', x: 200, y: 200, width: 400, content: window.data.url }]);
-        } else {
-           setNodes([
-             { id: '1', type: 'text', x: 100, y: 100, content: `CAMPAIGN: "${projectId.toUpperCase()}"\n\n(Tip: Paste images or text here)` },
-             { id: '2', type: 'image', x: 150, y: 200, content: 'https://picsum.photos/seed/void/400/500' },
-           ]);
-        }
-      }
-      setIsLoaded(true);
-    });
-  }, [projectId, storageKey, window.data?.url]);
-
-  // Save to local storage
+  // Save to storage
   useEffect(() => {
     let timeout: NodeJS.Timeout;
     if (isLoaded) {
-      timeout = setTimeout(() => {
-        set(storageKey, { nodes, comments });
-        if (isSyncingRef.current) {
-          isSyncingRef.current = false;
-          return;
-        }
-        
-        // Sync to Firestore
-        const roomRef = doc(db, 'moodboards', roomId);
-        const stateToSync = { nodes, comments: comments || [] };
-        
-        // Filter out functions or invalid data if needed, but array should be clean
-        setDoc(roomRef, stateToSync, { merge: true }).catch(err => {
-           console.error("Firebase sync error", err);
-        });
-      }, 500);
+      if (workspaceMode === 'private') {
+        timeout = setTimeout(() => {
+          set(storageKey, { nodes, comments });
+        }, 500);
+      } else {
+        timeout = setTimeout(() => {
+          if (isSyncingRef.current) {
+            isSyncingRef.current = false;
+            return;
+          }
+          const roomRef = doc(db, 'moodboards', roomId);
+          const stateToSync = { nodes, comments: comments || [], workspaceMode: 'shared' };
+          setDoc(roomRef, stateToSync, { merge: true }).catch(err => {
+             console.error("Firebase sync error", err);
+          });
+        }, 500);
+      }
     }
     return () => clearTimeout(timeout);
-  }, [nodes, comments, isLoaded, roomId, storageKey]);
+  }, [nodes, comments, isLoaded, roomId, storageKey, workspaceMode]);
 
   const addText = () => {
     const x = (window.width / 2 - camera.x) / camera.z;
@@ -336,6 +353,15 @@ export function Moodboard({ window }: { window: OSWindow }) {
 
       {/* Toolbar */}
       <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-white px-4 py-2 rounded-full shadow-lg border border-black/10 z-50 flex items-center gap-2">
+        <WorkspaceIndicator 
+          mode={workspaceMode} 
+          onToggle={() => setWorkspaceMode(prev => prev === 'private' ? 'shared' : 'private')} 
+          roomId={`moodboard-${projectId}`}
+          className="mr-2"
+          variant="light"
+        />
+        <div className="w-px h-6 bg-black/10 mx-[-4px]" />
+        
         <button onClick={() => setMode('select')} className={cn("w-8 h-8 rounded flex items-center justify-center transition-colors", mode === 'select' ? "bg-black text-white" : "text-black/60 hover:bg-slate-100 hover:text-black")}>
           <MousePointer2 className="w-4 h-4" />
         </button>

@@ -6,12 +6,17 @@ import { FileText, Grid, Presentation, FileCode, Printer, Share2, Save, X, Type,
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import DOMPurify from 'isomorphic-dompurify';
+import { db, doc, onSnapshot, setDoc } from '@/lib/firebase';
+import { WorkspaceIndicator } from '@/components/workspace-indicator';
 
 type AppType = 'word' | 'sheets' | 'slides' | 'pdf';
 
 export function ProductivitySuite({ window }: { window: OSWindow }) {
-  const { performanceMode } = useOS();
+  const { performanceMode, currentUser } = useOS();
   const [activeTab, setActiveTab] = useState<AppType>((window.data?.tab as AppType) || 'word');
+  const [workspaceMode, setWorkspaceMode] = useState<'private' | 'shared'>('private');
+  
+  const projectId = window.data?.projectId || 'global';
 
   return (
     <div className="w-full h-full flex flex-col bg-white text-slate-800 font-sans shadow-2xl relative overflow-hidden">
@@ -25,24 +30,35 @@ export function ProductivitySuite({ window }: { window: OSWindow }) {
 
       {/* Ribbon Banner */}
       <div className="relative z-10 flex flex-col bg-slate-50 border-b border-slate-200 shrink-0">
-        <div className="flex items-center gap-1 px-2 pt-2">
-          {(['word', 'sheets', 'slides', 'pdf'] as AppType[]).map((app) => (
-             <button
-               key={app}
-               onClick={() => setActiveTab(app)}
-               className={cn(
-                 "px-4 py-1.5 text-xs font-medium rounded-t-lg transition-colors border border-transparent border-b-0",
-                 activeTab === app 
-                   ? "bg-white text-blue-600 border-slate-200" 
-                   : "text-slate-500 hover:bg-slate-200/50 hover:text-slate-700"
-               )}
-             >
-               {app === 'word' && <div className="flex items-center gap-1.5"><FileText className="w-3.5 h-3.5" /> Word</div>}
-               {app === 'sheets' && <div className="flex items-center gap-1.5"><Grid className="w-3.5 h-3.5" /> Sheets</div>}
-               {app === 'slides' && <div className="flex items-center gap-1.5"><Presentation className="w-3.5 h-3.5" /> Slides</div>}
-               {app === 'pdf' && <div className="flex items-center gap-1.5"><FileCode className="w-3.5 h-3.5" /> PDF Reader</div>}
-             </button>
-          ))}
+        <div className="flex items-center justify-between px-2 pt-2">
+          <div className="flex items-center gap-1">
+            {(['word', 'sheets', 'slides', 'pdf'] as AppType[]).map((app) => (
+               <button
+                 key={app}
+                 onClick={() => setActiveTab(app)}
+                 className={cn(
+                   "px-4 py-1.5 text-xs font-medium rounded-t-lg transition-colors border border-transparent border-b-0 flex items-center min-w-[90px] justify-center text-center",
+                   activeTab === app 
+                     ? "bg-white text-blue-600 border-slate-200 shadow-[0_-2px_4px_rgba(0,0,0,0.02)]" 
+                     : "text-slate-500 hover:bg-slate-200/50 hover:text-slate-700"
+                 )}
+               >
+                 {app === 'word' && <div className="flex items-center gap-1.5"><FileText className="w-3.5 h-3.5" /> Word</div>}
+                 {app === 'sheets' && <div className="flex items-center gap-1.5"><Grid className="w-3.5 h-3.5" /> Sheets</div>}
+                 {app === 'slides' && <div className="flex items-center gap-1.5"><Presentation className="w-3.5 h-3.5" /> Slides</div>}
+                 {app === 'pdf' && <div className="flex items-center gap-1.5"><FileCode className="w-3.5 h-3.5" /> PDF Reader</div>}
+               </button>
+            ))}
+          </div>
+          
+          <div className="pb-1">
+            <WorkspaceIndicator 
+               mode={workspaceMode} 
+               onToggle={() => setWorkspaceMode(prev => prev === 'private' ? 'shared' : 'private')} 
+               roomId={`productivity-${window.data?.projectId || 'global'}`}
+               variant="light"
+            />
+          </div>
         </div>
         
         {/* Toolbar */}
@@ -105,9 +121,9 @@ export function ProductivitySuite({ window }: { window: OSWindow }) {
           transition={{ duration: 0.2 }}
           className="flex-1 relative z-10 overflow-hidden bg-slate-100"
         >
-          {activeTab === 'word' && <WordEditor performanceMode={performanceMode} />}
-          {activeTab === 'sheets' && <SheetsEditor />}
-          {activeTab === 'slides' && <SlidesEditor />}
+          {activeTab === 'word' && <WordEditor performanceMode={performanceMode} workspaceMode={workspaceMode} projectId={projectId} currentUser={currentUser} />}
+          {activeTab === 'sheets' && <SheetsEditor workspaceMode={workspaceMode} projectId={projectId} currentUser={currentUser} />}
+          {activeTab === 'slides' && <SlidesEditor workspaceMode={workspaceMode} projectId={projectId} currentUser={currentUser} />}
           {activeTab === 'pdf' && <PdfEditor initialUrl={window.data?.url} />}
         </motion.div>
       </AnimatePresence>
@@ -127,33 +143,68 @@ export function ProductivitySuite({ window }: { window: OSWindow }) {
   );
 }
 
-function WordEditor({ performanceMode }: { performanceMode: 'light' | 'heavy' }) {
+function WordEditor({ performanceMode, workspaceMode, projectId, currentUser }: { performanceMode: 'light' | 'heavy', workspaceMode: 'private' | 'shared', projectId: string, currentUser: any }) {
   const [content, setContent] = useState<string>("Loading document...");
   const [loaded, setLoaded] = useState(false);
+  const isSyncingRef = useRef(false);
+
+  const roomId = `word-${projectId}`;
+  const storageKey = `anichisom_os_word_${projectId}`;
 
   useEffect(() => {
-    import('idb-keyval').then(({ get }) => {
-      get('anichisom_os_word_content').then((saved) => {
-        if (saved) {
-          setContent(saved);
-        } else {
-          setContent(`<h1>Manifesto for the Edge</h1><p>The future of software is not centralized. It is distributed, local-first, and owned by the user.</p><h2>Self-Hostable Infrastructure</h2><p>Users who prefer data independence can pull the open-source code via Docker.</p>`);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLoaded(false);
+    if (workspaceMode === 'private') {
+      import('idb-keyval').then(({ get }) => {
+        get(storageKey).then((saved) => {
+          if (saved && typeof saved === 'string') {
+            setContent(saved);
+          } else {
+            setContent(`<h1>Manifesto for the Edge</h1><p>The future of software is not centralized. It is distributed, local-first, and owned by the user.</p><h2>Self-Hostable Infrastructure</h2><p>Users who prefer data independence can pull the open-source code via Docker.</p>`);
+          }
+          setLoaded(true);
+        });
+      });
+    } else {
+      if (!currentUser) return;
+      const roomRef = doc(db, 'docs', roomId);
+      const unsub = onSnapshot(roomRef, (snap) => {
+        if (snap.exists()) {
+          const state = snap.data();
+          if (state && state.content !== undefined && state.content !== content) {
+             isSyncingRef.current = true;
+             setContent(state.content);
+          }
         }
         setLoaded(true);
       });
-    });
-  }, []);
+      return () => unsub();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceMode, projectId, currentUser, roomId]);
 
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const handleInput = (e: React.FormEvent<HTMLDivElement>) => {
     const newContent = e.currentTarget.innerHTML;
     setContent(newContent);
+    if (isSyncingRef.current) {
+        isSyncingRef.current = false;
+        return;
+    }
+    
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = setTimeout(() => {
-      import('idb-keyval').then(({ set }) => {
-        set('anichisom_os_word_content', newContent);
-      });
+       if (workspaceMode === 'private') {
+          import('idb-keyval').then(({ set }) => {
+             set(storageKey, newContent);
+          });
+       } else {
+          const roomRef = doc(db, 'docs', roomId);
+          setDoc(roomRef, { content: newContent, workspaceMode: 'shared' }, { merge: true }).catch(err => {
+             console.error("Firebase sync error", err);
+          });
+       }
     }, 500);
   };
 
@@ -181,29 +232,64 @@ function WordEditor({ performanceMode }: { performanceMode: 'light' | 'heavy' })
   );
 }
 
-function SheetsEditor() {
+function SheetsEditor({ workspaceMode, projectId, currentUser }: { workspaceMode: 'private' | 'shared', projectId: string, currentUser: any }) {
   const [data, setData] = useState<Record<string, string>>({});
   const [loaded, setLoaded] = useState(false);
+  const isSyncingRef = useRef(false);
+
+  const roomId = `sheets-${projectId}`;
+  const storageKey = `anichisom_os_sheets_${projectId}`;
 
   useEffect(() => {
-    import('idb-keyval').then(({ get }) => {
-      get('anichisom_os_sheets_content').then((saved) => {
-        if (saved) setData(saved);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLoaded(false);
+    if (workspaceMode === 'private') {
+      import('idb-keyval').then(({ get }) => {
+        get(storageKey).then((saved) => {
+          if (saved) setData(saved);
+          setLoaded(true);
+        });
+      });
+    } else {
+      if (!currentUser) return;
+      const roomRef = doc(db, 'docs', roomId);
+      const unsub = onSnapshot(roomRef, (snap) => {
+        if (snap.exists()) {
+          const state = snap.data();
+          if (state && state.data !== undefined) {
+             isSyncingRef.current = true;
+             setData(state.data);
+          }
+        }
         setLoaded(true);
       });
-    });
-  }, []);
+      return () => unsub();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceMode, projectId, currentUser, roomId]);
 
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const handleChange = (cell: string, value: string) => {
     const newData = { ...data, [cell]: value };
     setData(newData);
+    if (isSyncingRef.current) {
+        isSyncingRef.current = false;
+        return;
+    }
+    
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = setTimeout(() => {
-      import('idb-keyval').then(({ set }) => {
-        set('anichisom_os_sheets_content', newData);
-      });
+        if (workspaceMode === 'private') {
+           import('idb-keyval').then(({ set }) => {
+             set(storageKey, newData);
+           });
+        } else {
+           const roomRef = doc(db, 'docs', roomId);
+           setDoc(roomRef, { data: newData, workspaceMode: 'shared' }, { merge: true }).catch(err => {
+              console.error("Firebase sync error", err);
+           });
+        }
     }, 500);
   };
 
@@ -256,31 +342,67 @@ function SheetsEditor() {
   );
 }
 
-function SlidesEditor() {
+function SlidesEditor({ workspaceMode, projectId, currentUser }: { workspaceMode: 'private' | 'shared', projectId: string, currentUser: any }) {
   const [title, setTitle] = useState("Project \"Edge\"");
   const [subtitle, setSubtitle] = useState("An infrastructure presentation explaining local-first architecture and node scaling.");
   const [loaded, setLoaded] = useState(false);
+  const isSyncingRef = useRef(false);
+
+  const roomId = `slides-${projectId}`;
+  const storageKey = `anichisom_os_slides_${projectId}`;
 
   useEffect(() => {
-    import('idb-keyval').then(({ get }) => {
-      get('anichisom_os_slides_content').then((saved) => {
-        if (saved) {
-          setTitle(saved.title || "");
-          setSubtitle(saved.subtitle || "");
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLoaded(false);
+    if (workspaceMode === 'private') {
+      import('idb-keyval').then(({ get }) => {
+        get(storageKey).then((saved) => {
+          if (saved) {
+            setTitle(saved.title || "");
+            setSubtitle(saved.subtitle || "");
+          }
+          setLoaded(true);
+        });
+      });
+    } else {
+      if (!currentUser) return;
+      const roomRef = doc(db, 'docs', roomId);
+      const unsub = onSnapshot(roomRef, (snap) => {
+        if (snap.exists()) {
+          const state = snap.data();
+          if (state && (state.title !== undefined || state.subtitle !== undefined)) {
+             isSyncingRef.current = true;
+             if (state.title !== undefined) setTitle(state.title);
+             if (state.subtitle !== undefined) setSubtitle(state.subtitle);
+          }
         }
         setLoaded(true);
       });
-    });
-  }, []);
+      return () => unsub();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceMode, projectId, currentUser, roomId]);
 
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const saveContent = (t: string, s: string) => {
+    if (isSyncingRef.current) {
+        isSyncingRef.current = false;
+        return;
+    }
+    
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = setTimeout(() => {
-      import('idb-keyval').then(({ set }) => {
-        set('anichisom_os_slides_content', { title: t, subtitle: s });
-      });
+        if (workspaceMode === 'private') {
+           import('idb-keyval').then(({ set }) => {
+             set(storageKey, { title: t, subtitle: s });
+           });
+        } else {
+           const roomRef = doc(db, 'docs', roomId);
+           setDoc(roomRef, { title: t, subtitle: s, workspaceMode: 'shared' }, { merge: true }).catch(err => {
+              console.error("Firebase sync error", err);
+           });
+        }
     }, 500);
   };
 

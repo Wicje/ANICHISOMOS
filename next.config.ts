@@ -5,6 +5,9 @@ const nextConfig: NextConfig = {
   eslint: {
     ignoreDuringBuilds: true,
   },
+  experimental: {
+    optimizePackageImports: ['lucide-react', 'date-fns', 'firebase', 'motion/react'],
+  },
   typescript: {
     ignoreBuildErrors: false,
   },

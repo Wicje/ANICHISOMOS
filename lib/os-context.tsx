@@ -123,6 +123,49 @@ export function OSProvider({ children }: { children: React.ReactNode }) {
     return () => unsubscribe();
   }, []);
 
+  useEffect(() => {
+    // If a user logs in, try to fetch their last session if we have no windows open,
+    // or give them an option. Let's just load their remote session on login if the local session is empty.
+    if (!currentUser) return;
+    
+    let isFetching = true;
+    const fetchSession = async () => {
+      const docRef = doc(db, 'users', currentUser.id, 'session', 'desktop');
+      try {
+        const snap = await getDoc(docRef);
+        if (snap.exists() && isFetching) {
+          const remoteWindows = snap.data().windows;
+          // Only auto-restore if we don't have windows currently, to prevent overwriting an active session without prompt.
+          setWindows(prev => {
+            if (prev.length === 0 && remoteWindows && remoteWindows.length > 0) {
+              const highest = Math.max(10, ...remoteWindows.map((w: any) => w.zIndex));
+              highestZIndexRef.current = highest;
+              return remoteWindows;
+            }
+            return prev;
+          });
+        }
+      } catch (err) {
+        console.error("Failed to load cloud session", err);
+      }
+    };
+    fetchSession();
+    
+    return () => { isFetching = false; };
+  }, [currentUser]);
+
+  // Save session automatically to cloud debounced
+  useEffect(() => {
+    if (!currentUser) return;
+    const timeout = setTimeout(() => {
+      const docRef = doc(db, 'users', currentUser.id, 'session', 'desktop');
+      setDoc(docRef, { windows: JSON.parse(JSON.stringify(windows)), timestamp: Date.now() }, { merge: true }).catch(err => {
+         console.error("Failed to save cloud session", err);
+      });
+    }, 2000);
+    return () => clearTimeout(timeout);
+  }, [windows, currentUser]);
+
   const saveSnapshot = useCallback((name: string) => {
     const newSnapshot: Snapshot = {
       id: crypto.randomUUID(),

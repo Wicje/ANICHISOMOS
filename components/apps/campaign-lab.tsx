@@ -71,35 +71,78 @@ const SLASH_COMMANDS = [
   { id: 'database', label: 'Database', icon: Database },
 ];
 
+import { collection, onSnapshot, setDoc, doc, deleteDoc, query, where, limit } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
+import { useOS } from '@/lib/os-context';
+
+import { WorkspaceIndicator } from '@/components/workspace-indicator';
+
 export function CampaignLab({ window }: { window: OSWindow }) {
+  const { currentUser } = useOS();
+  const [workspaceMode, setWorkspaceMode] = useState<'private' | 'shared'>('private');
   const [pages, setPages] = useState<Page[]>([]);
   const [activePageId, setActivePageId] = useState<string | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   useEffect(() => {
-    get('anichisom_os_campaign_lab_v2').then((saved) => {
-      if (saved && saved.length > 0) {
-        setPages(saved);
-        if (!activePageId) setActivePageId(saved[0].id);
-      } else {
-        setPages(DEFAULT_PAGES);
-        setActivePageId(DEFAULT_PAGES[0].id);
-      }
-      setIsLoaded(true);
-    });
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setIsLoaded(false);
+    if (workspaceMode === 'private') {
+      get('anichisom_os_campaign_lab_v2').then((saved) => {
+        if (saved && saved.length > 0) {
+          setPages(saved);
+          if (!activePageId) setActivePageId(saved[0].id);
+        } else {
+          setPages(DEFAULT_PAGES);
+          if (!activePageId) setActivePageId(DEFAULT_PAGES[0].id);
+        }
+        setIsLoaded(true);
+      });
+    } else {
+      if (!currentUser) return;
+      const q = query(collection(db, 'campaign_pages'), where('workspaceMode', '==', 'shared'));
+      const unsub = onSnapshot(q, (snap) => {
+        const loaded: Page[] = [];
+        snap.forEach(d => {
+           const data = d.data();
+           loaded.push(data as Page);
+        });
+        if (loaded.length === 0) {
+           setPages(DEFAULT_PAGES.map(p => ({...p, id: `shared-${p.id}`})));
+        } else {
+           // Basic parent/child integrity check could go here
+           setPages(loaded);
+           if (!activePageId && loaded.length > 0) setActivePageId(loaded[0].id);
+        }
+        setIsLoaded(true);
+      });
+      return () => unsub();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [workspaceMode, currentUser]);
 
   useEffect(() => {
     let timeout: NodeJS.Timeout;
     if (isLoaded) {
-      timeout = setTimeout(() => {
-        set('anichisom_os_campaign_lab_v2', pages);
-      }, 500);
+      if (workspaceMode === 'private') {
+         timeout = setTimeout(() => {
+           set('anichisom_os_campaign_lab_v2', pages);
+         }, 500);
+      } else {
+         timeout = setTimeout(() => {
+           // Firestore handles batches/offline queues naturally.
+           // In a full implementation, we sync individual docs incrementally.
+           // For simple structure, we'll sync the active page or let UI mutations push directly.
+           // Alternatively, since pages is all pages, we iterate and setDoc
+           pages.forEach(p => {
+             setDoc(doc(db, 'campaign_pages', p.id), { ...p, workspaceMode: 'shared' }, { merge: true });
+           });
+         }, 1000);
+      }
     }
     return () => clearTimeout(timeout);
-  }, [pages, isLoaded]);
+  }, [pages, isLoaded, workspaceMode]);
 
   const activePage = pages.find((p) => p.id === activePageId);
 
@@ -146,6 +189,12 @@ export function CampaignLab({ window }: { window: OSWindow }) {
       if (activePageId && idsToDelete.includes(activePageId)) {
         setTimeout(() => setActivePageId(next.length > 0 ? next[0].id : null), 0);
       }
+      
+      if (workspaceMode === 'shared') {
+         idsToDelete.forEach(delId => {
+             deleteDoc(doc(db, 'campaign_pages', delId)).catch(err => console.error(err));
+         });
+      }
       return next;
     });
   };
@@ -178,7 +227,22 @@ export function CampaignLab({ window }: { window: OSWindow }) {
           </div>
           
           <div className="flex-1 overflow-y-auto py-2">
-            <div className="px-3 pb-2 text-xs font-semibold text-[#37352f]/50">Private</div>
+            <div className="px-3 pb-2 flex items-center justify-between">
+              <span className="text-xs font-semibold text-[#37352f]/50 uppercase tracking-wider">
+                Workspace
+              </span>
+              <WorkspaceIndicator 
+                mode={workspaceMode} 
+                onToggle={() => setWorkspaceMode(prev => prev === 'private' ? 'shared' : 'private')} 
+                roomId={`campaign-lab-${window.data?.projectId || 'global'}`}
+                variant="notion" 
+              />
+            </div>
+            {pages.length === 0 && (
+              <div className="px-5 py-4 text-xs text-[#37352f]/40 italic">
+                No pages in this workspace yet.
+              </div>
+            )}
             <PageTree 
               pages={pages} 
               activePageId={activePageId} 
